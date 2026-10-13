@@ -428,12 +428,12 @@ final class CoreTests: XCTestCase {
         let sound = AudioFrame(samples: Array(repeating: 0.03, count: 1600), source: .system)
         let silent = AudioFrame(samples: Array(repeating: 0, count: 1600), source: .system)
         var chunks: [AudioChunk] = []
-        for _ in 0..<170 { chunks += buffer.ingest(sound, settings: settings) }
+        for _ in 0..<340 { chunks += buffer.ingest(sound, settings: settings) }
         for _ in 0..<9 { chunks += buffer.ingest(silent, settings: settings) }
         guard let final = chunks.last else { return XCTFail("Missing final decode") }
         XCTAssertTrue(final.final)
         XCTAssertTrue(final.replacesUtterance)
-        XCTAssertGreaterThan(final.samples.count, 16 * 16000)
+        XCTAssertGreaterThan(final.samples.count, 30 * 16000)
         var assembler = TranscriptAssembler()
         for chunk in chunks.dropLast() { _ = assembler.accept("Обривок веб-хука", chunk: chunk) }
         let corrected = "У нас є API який отримує вебхуки. Як забезпечити ідемпотентність якщо один вебхук прийде двічі?"

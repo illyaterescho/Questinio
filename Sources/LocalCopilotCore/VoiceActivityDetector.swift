@@ -41,7 +41,7 @@ public struct AudioBufferManager: Sendable {
     private var lastPreviewCount = 0
     private var utteranceAudio: [Float] = []
     private var utteranceTooLong = false
-    private let completeDecodeLimit = 29 * 16000
+    private let completeDecodeLimit = 60 * 16000
     private let completeDecodeMinimum = 7 * 16000
     public init() {}
     public mutating func ingest(_ frame: AudioFrame, settings: CopilotSettings) -> [AudioChunk] {
