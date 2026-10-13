@@ -1,0 +1,14 @@
+.build/
+build/
+dist/
+.swiftpm/
+*.log
+verification-*.json
+verification-*.aiff
+verification-*
+VERIFICATION.md
+backups/
+.DS_Store
+*.keychain-db
+*.p12
+*.pem
