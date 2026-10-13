@@ -423,6 +423,38 @@ final class CoreTests: XCTestCase {
         XCTAssertTrue(QuestionDetectionService.isQuestion("У мене є API який отримує вебхуки один і той самий вебхук може прийти двічі як забезпечити ідемпотентність при обробці"))
         XCTAssertFalse(QuestionDetectionService.isQuestion("Ми вже знаємо як працює цей механізм і описали всі його кроки"))
     }
+    func testLongUtteranceFinalDecodeReplacesBrokenWindowText() {
+        var buffer = AudioBufferManager(); var settings = CopilotSettings(); settings.chunkSeconds = 4; settings.silenceSeconds = 0.8
+        let sound = AudioFrame(samples: Array(repeating: 0.03, count: 1600), source: .system)
+        let silent = AudioFrame(samples: Array(repeating: 0, count: 1600), source: .system)
+        var chunks: [AudioChunk] = []
+        for _ in 0..<170 { chunks += buffer.ingest(sound, settings: settings) }
+        for _ in 0..<9 { chunks += buffer.ingest(silent, settings: settings) }
+        guard let final = chunks.last else { return XCTFail("Missing final decode") }
+        XCTAssertTrue(final.final)
+        XCTAssertTrue(final.replacesUtterance)
+        XCTAssertGreaterThan(final.samples.count, 16 * 16000)
+        var assembler = TranscriptAssembler()
+        for chunk in chunks.dropLast() { _ = assembler.accept("Обривок веб-хука", chunk: chunk) }
+        let corrected = "У нас є API який отримує вебхуки. Як забезпечити ідемпотентність якщо один вебхук прийде двічі?"
+        let update = assembler.accept(corrected, chunk: final)
+        XCTAssertEqual(update.confirmed, corrected)
+        XCTAssertEqual(update.completedUtterance, corrected)
+        XCTAssertTrue(QuestionDetectionService.isQuestion(corrected))
+    }
+    func testLongFinalDecodeKeepsEarlierWordsWhenWhisperReturnsBlank() {
+        var assembler = TranscriptAssembler(); let id = UUID()
+        _ = assembler.accept("Один вебхук може прийти двічі", chunk: chunk(id: id))
+        let final = AudioChunk(samples: [], source: .system, final: true, utterance: id, window: 1, overlapsPrevious: false, replacesUtterance: true)
+        let update = assembler.accept("", chunk: final)
+        XCTAssertEqual(update.completedUtterance, "Один вебхук може прийти двічі")
+        XCTAssertEqual(update.confirmed, "Один вебхук може прийти двічі")
+    }
+    func testDesiredOutcomeWithoutQuestionMarkTriggersAutomaticAnswer() {
+        let heard = "У нас є API, який отримує веб-хуки. Один і той самий веб-хук може бути. Я хочу призвать обробку так, щоб у нас дані не задублювалися, навіть якщо буде працювати декілька років"
+        XCTAssertTrue(QuestionDetectionService.isQuestion(heard))
+        XCTAssertFalse(QuestionDetectionService.isQuestion("Я хочу обговорити наш API і показати його викладачу"))
+    }
     func testSQLiteUnicodeAndDeletion() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

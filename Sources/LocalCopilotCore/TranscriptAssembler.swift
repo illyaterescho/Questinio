@@ -11,6 +11,7 @@ public struct TranscriptAssembler: Sendable {
     private var activeWindow = -1
     private var windowText = ""
     private var utteranceText = ""
+    private var confirmedBeforeUtterance = ""
     public init() {}
     private static func normalized(_ word: String) -> String { word.lowercased().trimmingCharacters(in: .punctuationCharacters) }
     public static func removeOverlap(previous: String, next: String) -> String {
@@ -28,7 +29,20 @@ public struct TranscriptAssembler: Sendable {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if utterance != chunk.utterance {
             if !windowText.isEmpty { appendConfirmed(windowText) }
+            confirmedBeforeUtterance = confirmed
             utterance = chunk.utterance; utteranceText = ""; windowText = ""; activeWindow = -1
+        }
+        if chunk.replacesUtterance {
+            let provisional = (utteranceText + " " + windowText).trimmingCharacters(in: .whitespacesAndNewlines)
+            // A whole-utterance decode repairs errors introduced at short
+            // window boundaries. Keep the windows if that decode is blank or
+            // implausibly shorter than speech already recognized.
+            let useComplete = !text.isEmpty && text.split(whereSeparator: \.isWhitespace).count >= max(3, provisional.split(whereSeparator: \.isWhitespace).count / 2)
+            confirmed = confirmedBeforeUtterance
+            let completed = useComplete ? text : provisional
+            appendConfirmed(completed)
+            interim = ""; utterance = nil; utteranceText = ""; windowText = ""; activeWindow = -1
+            return TranscriptUpdate(confirmed: confirmed, interim: interim, completedUtterance: completed.isEmpty ? nil : completed)
         }
         if chunk.window != activeWindow {
             if !windowText.isEmpty {
@@ -50,7 +64,7 @@ public struct TranscriptAssembler: Sendable {
     public mutating func discontinuity() {
         // A dropped frame or disconnected device invalidates only provisional
         // alignment. Never discard the already confirmed session transcript.
-        interim = ""; utterance = nil; activeWindow = -1; windowText = ""; utteranceText = ""
+        interim = ""; utterance = nil; activeWindow = -1; windowText = ""; utteranceText = ""; confirmedBeforeUtterance = confirmed
     }
     private mutating func appendConfirmed(_ text: String) {
         guard !text.isEmpty else { return }

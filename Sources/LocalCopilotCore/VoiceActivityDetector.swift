@@ -13,8 +13,10 @@ public struct AudioChunk: Sendable {
     public let utterance: UUID
     public let window: Int
     public let overlapsPrevious: Bool
-    public init(samples: [Float], source: AudioSource, final: Bool, utterance: UUID, window: Int, overlapsPrevious: Bool) {
-        self.samples = samples; self.source = source; self.final = final; self.utterance = utterance; self.window = window; self.overlapsPrevious = overlapsPrevious
+    public let replacesUtterance: Bool
+    public let fallbackSamples: [Float]?
+    public init(samples: [Float], source: AudioSource, final: Bool, utterance: UUID, window: Int, overlapsPrevious: Bool, replacesUtterance: Bool = false, fallbackSamples: [Float]? = nil) {
+        self.samples = samples; self.source = source; self.final = final; self.utterance = utterance; self.window = window; self.overlapsPrevious = overlapsPrevious; self.replacesUtterance = replacesUtterance; self.fallbackSamples = fallbackSamples
     }
 }
 public struct VoiceActivityDetector: Sendable {
@@ -37,6 +39,10 @@ public struct AudioBufferManager: Sendable {
     private var window = 0
     private var overlap = false
     private var lastPreviewCount = 0
+    private var utteranceAudio: [Float] = []
+    private var utteranceTooLong = false
+    private let completeDecodeLimit = 29 * 16000
+    private let completeDecodeMinimum = 7 * 16000
     public init() {}
     public mutating func ingest(_ frame: AudioFrame, settings: CopilotSettings) -> [AudioChunk] {
         let voiced = VoiceActivityDetector(threshold: Float(settings.vadThreshold)).isSpeech(frame.samples)
@@ -48,14 +54,20 @@ public struct AudioBufferManager: Sendable {
             }
             active = true; id = UUID(); window = 0; overlap = false
             buffer = preRoll; preRoll.removeAll(); voicedSamples = 0; lastPreviewCount = 0
+            utteranceAudio = buffer; utteranceTooLong = false
         }
         buffer.append(contentsOf: frame.samples)
+        if !utteranceTooLong {
+            if utteranceAudio.count + frame.samples.count <= completeDecodeLimit { utteranceAudio.append(contentsOf: frame.samples) }
+            else { utteranceAudio.removeAll(keepingCapacity: false); utteranceTooLong = true }
+        }
         if voiced { quietSamples = 0; voicedSamples += frame.samples.count }
         else { quietSamples += frame.samples.count }
         let ended = quietSamples >= Int(settings.silenceSeconds * 16000)
         let full = buffer.count >= Int(settings.chunkSeconds * 16000)
         if ended || full {
-            let chunk = AudioChunk(samples: buffer, source: frame.source, final: ended, utterance: id, window: window, overlapsPrevious: overlap)
+            let complete = ended && !utteranceTooLong && utteranceAudio.count >= completeDecodeMinimum
+            let chunk = AudioChunk(samples: complete ? utteranceAudio : buffer, source: frame.source, final: ended, utterance: id, window: window, overlapsPrevious: complete ? false : overlap, replacesUtterance: complete, fallbackSamples: complete ? buffer : nil)
             let valid = voicedSamples >= 2400 || (ended && overlap)
             if ended { reset() }
             else {
@@ -76,7 +88,8 @@ public struct AudioBufferManager: Sendable {
         // The last full window may have consumed all fresh speech. Its overlap
         // still needs a final decode so the utterance can become a question.
         guard active, voicedSamples >= 2400 || overlap else { return nil }
-        return AudioChunk(samples: buffer, source: source, final: true, utterance: id, window: window, overlapsPrevious: overlap)
+        let complete = !utteranceTooLong && utteranceAudio.count >= completeDecodeMinimum
+        return AudioChunk(samples: complete ? utteranceAudio : buffer, source: source, final: true, utterance: id, window: window, overlapsPrevious: complete ? false : overlap, replacesUtterance: complete, fallbackSamples: complete ? buffer : nil)
     }
-    public mutating func reset() { buffer.removeAll(keepingCapacity: true); preRoll.removeAll(); active = false; quietSamples = 0; voicedSamples = 0; lastPreviewCount = 0 }
+    public mutating func reset() { buffer.removeAll(keepingCapacity: true); preRoll.removeAll(); utteranceAudio.removeAll(keepingCapacity: true); utteranceTooLong = false; active = false; quietSamples = 0; voicedSamples = 0; lastPreviewCount = 0 }
 }

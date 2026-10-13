@@ -341,6 +341,7 @@ import LocalCopilotCore
             if event.source == .system { systemTranscript = update.confirmed; systemInterim = update.interim }
             else { microphoneTranscript = update.confirmed; microphoneInterim = update.interim }
             if let completed = update.completedUtterance {
+                diagnostics.log("Utterance finalized: \(event.source.rawValue); \(completed.split(whereSeparator: \.isWhitespace).count) words; audio \(String(format: "%.1f", event.finalAudioSeconds ?? 0)) s; whole-utterance decode \(event.wholeUtteranceDecode == true ? "yes" : "no"); auto question \(event.question == nil ? "no" : "yes")")
                 latestUtterance = completed
                 sessionContext.append(speaker: event.source == .system ? "Співрозмовник" : (captureSettings.listeningProfile == .classroom ? "Аудиторія / мікрофон" : "Мікрофон"), text: completed)
                 sessionTranscript = sessionContext.recent

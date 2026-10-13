@@ -36,6 +36,10 @@ public struct QuestionDetectionService: Sendable {
             let tail = words.suffix(30).joined(separator: " ")
             let embedded = #"(?:^|\s)(?:як\s+(?:зробити|забезпечити|гарантувати|запобігти|уникнути|вирішити|реалізувати|перевірити|обробити)|що\s+(?:робити|треба|потрібно|буде|означає|значить)|чому\s+|де\s+(?:знаходиться|саме|у\s|в\s)|чи\s+(?:можна|потрібно|буде|є\s|не\s))"#
             if tail.range(of: embedded, options: .regularExpression) != nil { return true }
+            // Spoken technical requests are often phrased as a desired outcome,
+            // and Whisper may lose the final explicit question after a pause.
+            let desiredOutcome = #"(?:^|\s)(?:(?:я|ми)\s+(?:хочу|хочемо|хотів|хотіла)|(?:мені|нам)\s+(?:треба|потрібно))\b.{0,120}\bщоб\b"#
+            if tail.range(of: desiredOutcome, options: .regularExpression) != nil { return true }
         }
         return false
     }
