@@ -28,6 +28,15 @@ public struct QuestionDetectionService: Sendable {
                    expression.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil { return true }
             }
         }
+        // Whisper often omits punctuation in a long problem description.
+        // Recognize an actionable question near the end without discarding
+        // the preceding context that the answer needs.
+        let words = value.split(whereSeparator: \.isWhitespace)
+        if words.count >= 8 {
+            let tail = words.suffix(30).joined(separator: " ")
+            let embedded = #"(?:^|\s)(?:як\s+(?:зробити|забезпечити|гарантувати|запобігти|уникнути|вирішити|реалізувати|перевірити|обробити)|що\s+(?:робити|треба|потрібно|буде|означає|значить)|чому\s+|де\s+(?:знаходиться|саме|у\s|в\s)|чи\s+(?:можна|потрібно|буде|є\s|не\s))"#
+            if tail.range(of: embedded, options: .regularExpression) != nil { return true }
+        }
         return false
     }
     // Called only for utterances completed by VAD pause, never for individual tokens.

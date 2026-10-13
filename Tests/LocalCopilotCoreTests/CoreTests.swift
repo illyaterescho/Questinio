@@ -392,6 +392,37 @@ final class CoreTests: XCTestCase {
         for _ in 0..<6 { chunks += buffer.ingest(AudioFrame(samples: Array(repeating: 0, count: 1600), source: .system), settings: settings) }
         XCTAssertEqual(chunks.filter(\.final).count, 1)
     }
+    func testStopImmediatelyAfterFullWindowFinalizesUtterance() {
+        var buffer = AudioBufferManager(); var settings = CopilotSettings(); settings.chunkSeconds = 4
+        var chunks: [AudioChunk] = []
+        for _ in 0..<40 { chunks += buffer.ingest(AudioFrame(samples: Array(repeating: 0.03, count: 1600), source: .system), settings: settings) }
+        XCTAssertTrue(chunks.contains { !$0.final })
+        let final = buffer.flush(source: .system)
+        XCTAssertEqual(final?.utterance, chunks.last?.utterance)
+        XCTAssertTrue(final?.final == true)
+    }
+    func testLongDescriptionThenQuestionSurvivesChunkWindows() {
+        var buffer = AudioBufferManager(); var settings = CopilotSettings(); settings.chunkSeconds = 4; settings.silenceSeconds = 0.8
+        let sound = AudioFrame(samples: Array(repeating: 0.03, count: 1600), source: .system)
+        let silent = AudioFrame(samples: Array(repeating: 0, count: 1600), source: .system)
+        var chunks: [AudioChunk] = []
+        for _ in 0..<120 { chunks += buffer.ingest(sound, settings: settings) }
+        for _ in 0..<9 { chunks += buffer.ingest(silent, settings: settings) }
+        XCTAssertGreaterThanOrEqual(chunks.filter { !$0.final }.count, 3)
+        XCTAssertEqual(chunks.filter(\.final).count, 1)
+        var assembler = TranscriptAssembler()
+        let text = ["У мене є API який отримує вебхуки", "один вебхук може прийти кілька разів", "як забезпечити ідемпотентність при обробці", "при обробці"]
+        var completed = ""
+        for chunk in chunks {
+            let phrase = text[min(chunk.window, text.count - 1)]
+            completed = assembler.accept(phrase, chunk: chunk).completedUtterance ?? completed
+        }
+        XCTAssertTrue(completed.contains("У мене є API"))
+        XCTAssertTrue(completed.contains("як забезпечити ідемпотентність"))
+        XCTAssertTrue(QuestionDetectionService.isQuestion(completed))
+        XCTAssertTrue(QuestionDetectionService.isQuestion("У мене є API який отримує вебхуки один і той самий вебхук може прийти двічі як забезпечити ідемпотентність при обробці"))
+        XCTAssertFalse(QuestionDetectionService.isQuestion("Ми вже знаємо як працює цей механізм і описали всі його кроки"))
+    }
     func testSQLiteUnicodeAndDeletion() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

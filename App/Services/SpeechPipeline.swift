@@ -23,6 +23,7 @@ actor SpeechPipeline {
         pending.removeAll { $0.source == .microphone }
     }
     private var decoding = false
+    private var decodeTask: Task<Void, Never>?
     private var running = false
     private var epoch = UUID()
     private var lastFrames: [AudioSource: Date] = [:]
@@ -51,6 +52,8 @@ actor SpeechPipeline {
             }
             group.cancelAll()
         }
+        if Task.isCancelled { cancel() }
+        else { await finishPendingAudio() }
     }
     private func ingest(_ frame: AudioFrame) async {
         let now = Date()
@@ -76,19 +79,37 @@ actor SpeechPipeline {
         buffers = [:]; pending = []; epoch = UUID()
         for source in Array(assemblers.keys) { assemblers[source]?.discontinuity() }
     }
-    func stop() { running = false; pending = []; buffers = [:]; epoch = UUID() }
+    func cancel() {
+        running = false; pending = []; buffers = [:]; epoch = UUID()
+        decodeTask?.cancel(); decodeTask = nil
+    }
+    private func finishPendingAudio() async {
+        guard running else { return }
+        // A user may press Stop after the speaker pauses while Whisper is still
+        // decoding earlier windows. Finish the last window and drain in order.
+        for (source, buffer) in buffers {
+            if let chunk = buffer.value.flush(source: source) { await enqueue(chunk) }
+        }
+        if let decodeTask { await decodeTask.value }
+        running = false; pending = []; buffers = [:]; handler = nil
+    }
     private func enqueue(_ chunk: AudioChunk) async {
         // Coalesce interim snapshots of the same window; retain final results.
         pending.removeAll { $0.utterance == chunk.utterance && $0.window == chunk.window && !$0.final }
         if pending.count >= 8 {
-            pending.removeFirst()
-            await handler?(PipelineEvent(source: chunk.source, error: "Whisper is falling behind; an old audio chunk was dropped. Select Whisper base or increase chunk duration."))
+            // A final window carries unique words from a long question. Only
+            // provisional previews may be discarded under decoder pressure.
+            if let preview = pending.firstIndex(where: { !$0.final }) {
+                pending.remove(at: preview)
+            } else if !chunk.final {
+                return
+            }
         }
         pending.append(chunk)
-        if !decoding { decoding = true; Task { await self.drain() } }
+        if !decoding { decoding = true; decodeTask = Task { await self.drain() } }
     }
     private func drain() async {
-        defer { decoding = false }
+        defer { decoding = false; decodeTask = nil }
         while !pending.isEmpty && running {
             let chunk = pending.removeFirst(); let currentEpoch = epoch; let micEpoch = microphoneEpoch
             do {

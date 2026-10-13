@@ -73,7 +73,9 @@ public struct AudioBufferManager: Sendable {
     }
     public mutating func flush(source: AudioSource) -> AudioChunk? {
         defer { reset() }
-        guard active, voicedSamples >= 2400 else { return nil }
+        // The last full window may have consumed all fresh speech. Its overlap
+        // still needs a final decode so the utterance can become a question.
+        guard active, voicedSamples >= 2400 || overlap else { return nil }
         return AudioChunk(samples: buffer, source: source, final: true, utterance: id, window: window, overlapsPrevious: overlap)
     }
     public mutating func reset() { buffer.removeAll(keepingCapacity: true); preRoll.removeAll(); active = false; quietSamples = 0; voicedSamples = 0; lastPreviewCount = 0 }

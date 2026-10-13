@@ -19,7 +19,7 @@ struct MenuContent: View {
     @Environment(\.openWindow) private var openWindow
     var body: some View {
         Button("Open Questionio") { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
-        Button(model.running ? "Stop listening" : "Start listening") { Task { if model.running { await model.stop() } else { await model.start() } } }.disabled(model.starting || model.modelBusy)
+        Button(model.stopping ? "Finishing speech…" : model.running ? "Stop listening" : "Start listening") { Task { if model.running { await model.stop() } else { await model.start() } } }.disabled(model.starting || model.stopping || model.modelBusy)
         Button("Generate Answer", action: model.generateManual)
         Button("Show / hide floating window") { model.togglePanel?() }
         Divider(); SettingsLink { Text("Settings…") }; Divider()

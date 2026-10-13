@@ -20,6 +20,7 @@ import LocalCopilotCore
     @Published var history: [ConversationRecord] = []
     @Published var running = false
     @Published var starting = false
+    @Published var stopping = false
     @Published var generating = false
     @Published var modelBusy = false
     @Published var systemTranscript = ""
@@ -51,7 +52,7 @@ import LocalCopilotCore
     @Published var questionEditing = false
     @Published var mySpeaking = false
     func selectListeningProfile(_ profile: ListeningProfile) {
-        guard !running, !starting else { return }
+        guard !running, !starting, !stopping else { return }
         settings.applyListeningProfile(profile)
         if profile == .classroom, settings.microphoneID == 0, let builtIn = microphones.first(where: { $0.name.localizedCaseInsensitiveContains("MacBook") || $0.name.localizedCaseInsensitiveContains("Built-in") }) { settings.microphoneID = builtIn.id }
     }
@@ -269,7 +270,7 @@ import LocalCopilotCore
         do { try await storage?.deleteAll(); history = [] } catch { self.error = error.localizedDescription }
     }
     func downloadModel() async {
-        guard !running, !starting, !modelBusy else { return }
+        guard !running, !starting, !stopping, !modelBusy else { return }
         modelBusy = true; whisperStatus = "Downloading model + tokenizer…"; defer { modelBusy = false }
         do {
             let folder = try await speech.download(variant: settings.whisperVariant)
@@ -314,13 +315,16 @@ import LocalCopilotCore
             diagnostics.log("Capture started: \(snapshot.audioMode.rawValue); source: \(captureSourceName); microphone: \(microphoneDeviceName); default output: \(outputDeviceName); ghost: \(snapshot.privateWindow)")
         } catch { if !(await speech.ready) { whisperStatus = "Failed · retry in Settings" }; self.error = error.localizedDescription; diagnostics.log(self.error); await capture.stop() }
     }
-    func stop() async {
-        guard !starting else { return }
+    func stop(finalize: Bool = true) async {
+        guard !starting, !stopping else { return }
+        stopping = true; defer { stopping = false }
         running = false; mySpeaking = false
-        audioTask?.cancel(); audioTask = nil
-        await pipeline.stop(); await capture.stop(); activeCaptureSettings = nil; refreshMicrophones()
+        if !finalize { audioTask?.cancel(); await pipeline.cancel() }
+        await capture.stop()
+        if let audioTask { await audioTask.value }
+        audioTask = nil; activeCaptureSettings = nil; refreshMicrophones()
         micLevel = 0; systemLevel = 0; micStatus = "Stopped"; systemStatus = "Stopped"
-        diagnostics.log("Capture stopped; dropped \(capture.droppedFrames) audio frames; transcript retained. Last unfinished utterance is not auto-submitted.")
+        diagnostics.log("Capture stopped; dropped \(capture.droppedFrames) audio frames; \(finalize ? "pending speech decoded" : "pending speech discarded").")
     }
     private func receive(_ event: PipelineEvent) {
         if let level = event.level {
@@ -511,7 +515,7 @@ import LocalCopilotCore
     }
     func cancelGeneration() { memoryTask?.cancel(); memoryTask = nil; generationID = UUID(); generationTask?.cancel(); generationTask = nil; generating = false; pendingQuestion = nil }
     func newConversation() async {
-        await stop(); cancelGeneration(); recognizedQuestionNote = ""; autoAnswerStatus = "Автовідповідь: очікування завершеного питання"; messages = []; sessionContext = SessionContext(); sessionTranscript = ""; memorySummary = ""; sessionTopic = ""; lastCodeContext = ""; lastProjectCode = ""; lastQuestionUsedCode = false; questionEditing = false; screen.clear(); session = UUID(); question = ""; answer = ""; thinkingText = ""; latestUtterance = ""
+        await stop(finalize: false); cancelGeneration(); recognizedQuestionNote = ""; autoAnswerStatus = "Автовідповідь: очікування завершеного питання"; messages = []; sessionContext = SessionContext(); sessionTranscript = ""; memorySummary = ""; sessionTopic = ""; lastCodeContext = ""; lastProjectCode = ""; lastQuestionUsedCode = false; questionEditing = false; screen.clear(); session = UUID(); question = ""; answer = ""; thinkingText = ""; latestUtterance = ""
         systemTranscript = ""; microphoneTranscript = ""; systemInterim = ""; microphoneInterim = ""
     }
     func restore(_ record: ConversationRecord) {

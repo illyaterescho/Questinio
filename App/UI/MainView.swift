@@ -20,7 +20,7 @@ struct MainView: View {
         }.frame(minWidth: 880, minHeight: 600).preferredColorScheme(model.settings.appearance == "dark" ? .dark : model.settings.appearance == "light" ? .light : nil)
         .toolbar {
             ToolbarItemGroup {
-                Button { Task { await model.newConversation() } } label: { Label("New session", systemImage: "plus") }.disabled(model.starting)
+                Button { Task { await model.newConversation() } } label: { Label("New session", systemImage: "plus") }.disabled(model.starting || model.stopping)
                 Button { model.togglePanel?() } label: { Label("Floating window", systemImage: "pip") }
                 SettingsLink { Image(systemName: "gearshape") }.help("Settings")
             }
@@ -31,7 +31,7 @@ struct MainView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) { Text("Your local conversation copilot").font(.title2.weight(.semibold)); Text("Listen, understand, and answer — on this Mac.").foregroundStyle(.secondary) }
                 Spacer()
-                Button { Task { if model.running { await model.stop() } else { await model.start() } } } label: { Label(model.starting ? "Starting…" : model.running ? "Stop" : "Start", systemImage: model.running ? "stop.fill" : "play.fill") }.buttonStyle(.borderedProminent).disabled(model.starting || model.modelBusy)
+                Button { Task { if model.running { await model.stop() } else { await model.start() } } } label: { Label(model.stopping ? "Finishing…" : model.starting ? "Starting…" : model.running ? "Stop" : "Start", systemImage: model.running ? "stop.fill" : "play.fill") }.buttonStyle(.borderedProminent).disabled(model.starting || model.stopping || model.modelBusy)
             }
             HStack { StatusPill(title: "Whisper", value: model.whisperStatus); StatusPill(title: "Ollama", value: model.ollamaStatus); Spacer(); Toggle("Automatic answers", isOn: $model.settings.automatic).toggleStyle(.switch).controlSize(.small) }
             Toggle("Швидкий режим · 4B (може помилятися в коді)", isOn: $model.settings.fastAnswers).font(.caption)
@@ -59,7 +59,7 @@ struct FloatingView: View {
     @ObservedObject var model: ConversationManager
     var body: some View {
         VStack(spacing: 8) {
-            HStack { Label("Questionio", systemImage: "waveform").font(.caption.weight(.semibold)); Spacer(); Toggle("Top", isOn: $model.settings.alwaysOnTop).toggleStyle(.checkbox).disabled(model.settings.privateWindow).help("Ghost mode keeps Notes above full-screen apps automatically"); Button { Task { if model.running { await model.stop() } else { await model.start() } } } label: { Image(systemName: model.running ? "stop.fill" : "play.fill") }.disabled(model.starting || model.modelBusy) }
+            HStack { Label("Questionio", systemImage: "waveform").font(.caption.weight(.semibold)); Spacer(); Toggle("Top", isOn: $model.settings.alwaysOnTop).toggleStyle(.checkbox).disabled(model.settings.privateWindow).help("Ghost mode keeps Notes above full-screen apps automatically"); Button { Task { if model.running { await model.stop() } else { await model.start() } } } label: { Image(systemName: model.stopping ? "hourglass" : model.running ? "stop.fill" : "play.fill") }.disabled(model.starting || model.stopping || model.modelBusy) }
             CaptureSourceView(model: model, compact: true)
             CompactProjectContext(project: model.project)
             if !model.editor.enabled || model.project.rootPath.isEmpty { CompactCodeContext(screen: model.screen) }
@@ -92,7 +92,7 @@ struct CaptureSourceView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             if !compact {
-                Picker("Режим пари", selection: Binding(get: { model.settings.listeningProfile }, set: { model.selectListeningProfile($0) })) { ForEach(ListeningProfile.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.pickerStyle(.segmented).disabled(model.running || model.starting)
+                Picker("Режим пари", selection: Binding(get: { model.settings.listeningProfile }, set: { model.selectListeningProfile($0) })) { ForEach(ListeningProfile.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.pickerStyle(.segmented).disabled(model.running || model.starting || model.stopping)
                 HStack {
                     Picker("Захоплення", selection: $model.settings.audioMode) { ForEach(AudioMode.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.frame(maxWidth: 220)
                     Picker("Програма", selection: $model.settings.applicationID) {
@@ -101,7 +101,7 @@ struct CaptureSourceView: View {
                         if !model.settings.applicationID.isEmpty && !model.applications.contains(where: { $0.id == model.settings.applicationID }) { Text(model.settings.applicationID).tag(model.settings.applicationID) }
                     }.disabled(model.settings.audioMode == .microphone)
                     Button { Task { await model.refreshApplications() } } label: { Image(systemName: "arrow.clockwise") }.help("Оновити програми")
-                }.disabled(model.running || model.starting || model.diagnostics.testing)
+                }.disabled(model.running || model.starting || model.stopping || model.diagnostics.testing)
                 if model.settings.effectiveAudioMode != .system {
                     Picker("Мікрофон", selection: $model.settings.microphoneID) { Text("Системний за замовчуванням").tag(UInt32(0)); ForEach(model.microphones) { Text($0.name).tag($0.id) } }.disabled(model.running || model.starting)
                 }
