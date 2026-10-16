@@ -1,6 +1,32 @@
 import XCTest
 @testable import LocalCopilotCore
 final class CoreTests: XCTestCase {
+    func testQuestionInboxPreservesContextAtQuestionTime() {
+        var context = SessionContext(); var inbox = QuestionInbox(); let now = Date()
+        context.append(speaker: "Співрозмовник", text: "Розглядаємо ЛР1 аптеки.")
+        inbox.append("Що означає ексцес?", source: "Співрозмовник", context: context, at: now)
+        context.append(speaker: "Співрозмовник", text: "Тепер переходимо до ліфта ЛР2.")
+        inbox.append("Що означає ексцес?", source: "Співрозмовник", context: context, at: now.addingTimeInterval(1))
+        inbox.append("Тепер переходимо до ліфта ЛР2.", source: "Співрозмовник", context: context)
+        XCTAssertEqual(inbox.entries.count, 1)
+        XCTAssertTrue(inbox.entries[0].context.recent.contains("аптеки"))
+        XCTAssertFalse(inbox.entries[0].context.recent.contains("ліфта"))
+    }
+    func testPharmacyDefenseKeepsLabDatasetsAndMomentConventionsSeparate() {
+        let files = [ProjectCodeFile(path: "math_statistics.py", text: ""), ProjectCodeFile(path: "data_processing.py", text: "")]
+        let profile = LabDefenseProfile.detect(root: "/tmp/lab1_iad_pharmacy", files: files)
+        XCTAssertNotNil(profile)
+        XCTAssertNil(LabDefenseProfile.detect(root: "/tmp/another_lab", files: files))
+        let context = profile!.context(question: "Чому в дисперсії n-1, а в асиметрії n?")
+        XCTAssertTrue(context.contains("variant_data.xlsx"))
+        XCTAssertTrue(context.contains("lr2_variant11.xlsx"))
+        XCTAssertTrue(context.contains("Не підставляти S замість"))
+        XCTAssertTrue(context.contains("n−1"))
+        XCTAssertTrue(SpeechVocabulary.text(profile: "Mathematics", custom: "").contains("ексцес"))
+        XCTAssertTrue(QuestionDetectionService.isQuestion("Ексцес"))
+        XCTAssertEqual(TechnicalQuestionNormalizer.normalize("Що означає ексцез?"), "Що означає ексцес?")
+        XCTAssertFalse(QuestionDetectionService.isQuestion("Ми порахували ексцес і завершили роботу"))
+    }
     func testProjectReadsFullFileAndSkipsDependenciesAndSymlinks() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root.appendingPathComponent("node_modules"), withIntermediateDirectories: true)

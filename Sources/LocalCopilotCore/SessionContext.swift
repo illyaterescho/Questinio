@@ -1,10 +1,11 @@
 import Foundation
 
 public enum SpeechVocabulary {
-    public static let profiles = ["General", "JavaScript", "Python", "SQL"]
+    public static let profiles = ["General", "Mathematics", "JavaScript", "Python", "SQL"]
     public static func text(profile: String, custom: String) -> String {
         let terms: String
         switch profile {
+        case "Mathematics": terms = LabDefenseProfile.vocabulary
         case "JavaScript": terms = "JavaScript, TypeScript, Promise, async/await, callback, closure, event loop, React, Node.js, null, undefined, NaN, race condition, рейс кондишн, уникати, статична типізація, динамічна типізація."
         case "Python": terms = "Python, asyncio, coroutine, generator, decorator, GIL, list, tuple, dictionary, type hints, статична типізація, динамічна типізація."
         case "SQL": terms = "SQL, PostgreSQL, MySQL, SELECT, JOIN, GROUP BY, HAVING, index, transaction, ACID, isolation, deadlock, індекс, транзакція."
@@ -76,5 +77,24 @@ public struct SessionContext: Sendable {
         }
         let user = blocks.joined(separator: "\n\n") + "\n\nПоточне питання (відповідай саме на нього):\n" + question
         return [ChatMessage(role: "system", content: system)] + kept + [ChatMessage(role: "user", content: user)]
+    }
+}
+
+public struct QuestionInbox: Sendable {
+    public struct Entry: Identifiable, Sendable {
+        public let id = UUID()
+        public let text: String
+        public let source: String
+        public let date: Date
+        public let context: SessionContext
+    }
+    public private(set) var entries: [Entry] = []
+    public init() {}
+    public mutating func append(_ text: String, source: String, context: SessionContext, at date: Date = Date()) {
+        guard QuestionDetectionService.isQuestion(text) else { return }
+        let normalized = TechnicalQuestionNormalizer.normalize(text).trimmingCharacters(in: .whitespacesAndNewlines)
+        if let last = entries.last, last.source == source, last.text == normalized, date.timeIntervalSince(last.date) < 8 { return }
+        entries.append(Entry(text: normalized, source: source, date: date, context: context))
+        if entries.count > 50 { entries.removeFirst(entries.count - 50) }
     }
 }

@@ -37,7 +37,7 @@ public struct ProjectCodeIndex: Sendable {
         let root = root.standardizedFileURL.resolvingSymlinksInPath()
         let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .isDirectoryKey]
         guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles]) else { throw CopilotError.message("Не вдалося прочитати папку") }
-        let excluded: Set<String> = ["node_modules", "dist", "build", "coverage", "Vendor", "vendor", "Pods", "tmp", "output", "venv", "__pycache__"]
+        let excluded: Set<String> = ["node_modules", "dist", "build", "coverage", "Vendor", "vendor", "Pods", "tmp", "output", "submission", "venv", "__pycache__"]
         var files: [ProjectCodeFile] = []; var bytes = 0
         for case let url as URL in walker {
             let values = try url.resourceValues(forKeys: keys)
@@ -90,6 +90,7 @@ public struct ProjectCodeIndex: Sendable {
         let line = Self.requestedLine(question)
         let local = Self.refersToCurrentCode(question) && line == nil && focusLine != nil
         var query = Self.tokens(question)
+        for (stem, aliases) in [("дисперс", ["variance"]), ("асиметр", ["skewness"]), ("ексцес", ["kurtosis"]), ("довір", ["confidence_table", "confidence", "quantile"]), ("похиб", ["standard_errors", "se"]), ("емпір", ["ecdf"]), ("штер", ["sturges_classes"]), ("гістограм", ["build_histogram"]), ("логариф", ["log"]), ("обернен", ["inverse_cdf"]), ("дельт", ["delta_metric"])] where question.lowercased().contains(stem) { query.formUnion(aliases.flatMap { Self.tokens($0) }) }
         for (stem, aliases) in [("збереж", ["storage", "save", "persist"]), ("зберіг", ["storage", "save", "persist"]), ("перезавантаж", ["load", "storage", "json"]), ("вибран", ["favorites", "favorite"]), ("погод", ["weather"]), ("температур", ["temperature", "celsius", "fahrenheit"]), ("видал", ["remove", "delete"]), ("дода", ["add"]), ("завантаж", ["load"]), ("спостерігач", ["subject", "observable"])] where question.lowercased().contains(stem) { query.formUnion(aliases) }
         let labRegex = try? NSRegularExpression(pattern: #"(?i)(?:lab[-_ ]*|лаб[а-яі]*\s*(?:№)?\s*)(\d{1,2})"#)
         let labMatch = labRegex?.firstMatch(in: question, range: NSRange(question.startIndex..., in: question))

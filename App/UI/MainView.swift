@@ -42,6 +42,7 @@ struct MainView: View {
             if !model.error.isEmpty { HStack(alignment: .top) { Image(systemName: "exclamationmark.triangle"); Text(model.error).font(.caption).textSelection(.enabled); Spacer(); Button { model.error = "" } label: { Image(systemName: "xmark") } }.foregroundStyle(.orange).padding(10).background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8)) }
             HSplitView {
                 VStack(spacing: 12) {
+                    QuestionInboxView(model: model)
                     TranscriptCard(title: "Live Transcript · System", confirmed: model.systemTranscript, interim: model.systemInterim)
                     if model.settings.audioMode != .system { TranscriptCard(title: "Live Transcript · Microphone", confirmed: model.microphoneTranscript, interim: model.microphoneInterim) }
                     Text("Last decode: \(model.decodeSeconds, specifier: "%.2f") s · provisional text is gray").font(.caption).foregroundStyle(.secondary)
@@ -63,6 +64,7 @@ struct FloatingView: View {
             CaptureSourceView(model: model, compact: true)
             CompactProjectContext(project: model.project)
             if !model.editor.enabled || model.project.rootPath.isEmpty { CompactCodeContext(screen: model.screen) }
+            QuestionInboxView(model: model, compact: true)
             AnswerCard(model: model, compact: true)
             HStack { TextField("Question…", text: $model.manualQuestion).onSubmit { model.generateManual() }; Button("Answer") { model.generateManual() } }
             if !model.error.isEmpty { Text(model.error).font(.caption).foregroundStyle(.orange).lineLimit(3).help(model.error) }
@@ -133,9 +135,46 @@ struct CompactProjectContext: View {
     @ObservedObject var project: ProjectContextService
     var body: some View {
         HStack {
-            Label(project.rootPath.isEmpty ? "Код лабораторної не підключено" : "Папка: " + URL(fileURLWithPath: project.rootPath).lastPathComponent + " · " + String(project.files.count) + " файлів", systemImage: "folder.badge.gearshape").font(.caption).lineLimit(2)
+            VStack(alignment: .leading, spacing: 2) {
+                Label(project.rootPath.isEmpty ? "Код лабораторної не підключено" : "Папка: " + URL(fileURLWithPath: project.rootPath).lastPathComponent + " · " + String(project.files.count) + " файлів", systemImage: "folder.badge.gearshape").font(.caption).lineLimit(2)
+                if let profile = project.defenseProfile { Label(profile.name, systemImage: "function").font(.caption2).foregroundStyle(.blue) }
+            }
             Spacer()
             Button(project.rootPath.isEmpty ? "Вибрати папку…" : "Змінити…") { project.chooseFolder() }.controlSize(.small)
+        }
+    }
+}
+
+struct QuestionInboxView: View {
+    @ObservedObject var model: ConversationManager
+    var compact = false
+    var body: some View {
+        if compact {
+            Menu("Питання діалогу · \(model.questionInbox.entries.count)") {
+                ForEach(model.questionInbox.entries.reversed()) { item in
+                    Button(item.text) { model.answerSelectedQuestion(item) }
+                }
+            }.disabled(model.questionInbox.entries.isEmpty)
+        } else {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Питання діалогу · натисніть для відповіді").font(.caption.bold())
+                if model.questionInbox.entries.isEmpty {
+                    Text("Після Start тут з’являться розпізнані питання. Для відповіді лише за кліком вимкніть Automatic answers.").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 6) {
+                            ForEach(model.questionInbox.entries.reversed()) { item in
+                                Button { model.answerSelectedQuestion(item) } label: {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(item.text).lineLimit(3).multilineTextAlignment(.leading)
+                                        Text(item.source + " · " + item.date.formatted(date: .omitted, time: .shortened)).font(.caption2).foregroundStyle(.secondary)
+                                    }.frame(maxWidth: .infinity, alignment: .leading)
+                                }.buttonStyle(.bordered).tint(.blue)
+                            }
+                        }
+                    }.frame(maxHeight: 130)
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

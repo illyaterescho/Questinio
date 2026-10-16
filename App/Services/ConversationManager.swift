@@ -46,6 +46,7 @@ import LocalCopilotCore
     @Published var generationSeconds: Double?
     @Published var sessionTopic = ""
     @Published var sessionTranscript = ""
+    @Published var questionInbox = QuestionInbox()
     @Published var memorySummary = "" { didSet { sessionContext.summary = memorySummary } }
     @Published var summarizing = false
     @Published var editedQuestion = ""
@@ -120,7 +121,10 @@ import LocalCopilotCore
         }
         editor.enabled = settings.readWebStorm
         editor.onEnabledChanged = { [weak self] enabled in self?.settings.readWebStorm = enabled }
-        project.onRootChanged = { [weak self] path in self?.settings.projectFolder = path; self?.lastProjectCode = "" }
+        project.onRootChanged = { [weak self] path in
+            self?.settings.projectFolder = path; self?.lastProjectCode = ""
+            if URL(fileURLWithPath: path).lastPathComponent.lowercased().hasPrefix("lab1_iad_pharmacy") { self?.settings.vocabularyProfile = "Mathematics" }
+        }
         if !settings.projectFolder.isEmpty { project.connect(settings.projectFolder) }
         refreshMicrophones()
         Task { await refreshModels(); await refreshHistory(); await refreshApplications() }
@@ -345,6 +349,7 @@ import LocalCopilotCore
                 latestUtterance = completed
                 sessionContext.append(speaker: event.source == .system ? "Співрозмовник" : (captureSettings.listeningProfile == .classroom ? "Аудиторія / мікрофон" : "Мікрофон"), text: completed)
                 sessionTranscript = sessionContext.recent
+                questionInbox.append(completed, source: event.source == .system ? "Співрозмовник" : "Мікрофон", context: sessionContext)
                 scheduleMemoryCompression()
                 if !settings.automatic { autoAnswerStatus = "Автовідповідь вимкнена" }
                 else if event.source == .microphone && !settings.answerFromMicrophone { autoAnswerStatus = "Для мікрофона автовідповідь вимкнена" }
@@ -369,12 +374,20 @@ import LocalCopilotCore
     }
     func generateManual() {
         let input = manualQuestion.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !input.isEmpty { recognizedQuestionNote = "" }
+        if !input.isEmpty {
+            recognizedQuestionNote = ""
+            questionInbox.append(input, source: "Введено вручну", context: sessionContext)
+        }
         generate(input.isEmpty ? resolveSpeechQuestion(latestUtterance) : input)
     }
-    func generate(_ input: String) {
+    func answerSelectedQuestion(_ entry: QuestionInbox.Entry) {
+        recognizedQuestionNote = "Обране питання · " + entry.date.formatted(date: .omitted, time: .standard)
+        generate(entry.text, context: entry.context)
+    }
+    func generate(_ input: String, context: SessionContext? = nil) {
         guard !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { error = "Enter a question or capture a completed utterance first."; return }
         let useCode = CodeQuestionRouter.needsCode(input, previousCodeQuestion: lastQuestionUsedCode)
+        let responseContext = context ?? sessionContext
         let continuingCodeQuestion = lastQuestionUsedCode && useCode && !QuestionContextRouter.isSelfContained(input)
         lastQuestionUsedCode = useCode
         cancelGeneration()
@@ -385,6 +398,7 @@ import LocalCopilotCore
         generationTask = Task { [weak self, ollama] in
             do {
                 guard let self else { return }
+                let study = self.project.defenseProfile
                 let needsCurrentEditor = ProjectCodeIndex.refersToCurrentCode(input) || ProjectCodeIndex.requestedLine(input) != nil
                 let editorSnapshot = !useCode || !needsCurrentEditor || self.project.rootPath.isEmpty || !self.screen.enabled ? nil : self.editor.snapshot(root: self.project.rootPath)
                 guard self.generationID == id, !Task.isCancelled else { return }
@@ -395,7 +409,7 @@ import LocalCopilotCore
                     self.sessionContext.append(speaker: "Показаний код: " + self.screen.sourceName, text: String(self.screen.codeText.prefix(10000)))
                 }
                 let retrievalStart = Date()
-                var retrieved = !useCode || self.project.rootPath.isEmpty ? nil : self.project.context(question: input, source: self.screen.enabled ? self.screen.sourceName : "", visible: self.screen.enabled ? self.screen.codeText : "", editor: editorSnapshot)
+                var retrieved = (!useCode && study == nil) || self.project.rootPath.isEmpty ? nil : self.project.context(question: input, source: self.screen.enabled ? self.screen.sourceName : "", visible: self.screen.enabled ? self.screen.codeText : "", editor: editorSnapshot)
                 if useCode && retrieved?.context.isEmpty != false && self.screen.enabled && self.screen.automatic {
                     await self.screen.refreshForAnswer()
                     guard self.generationID == id, !Task.isCancelled else { return }
@@ -404,6 +418,7 @@ import LocalCopilotCore
                     }
                 }
                 var code = retrieved?.context.isEmpty == false ? retrieved!.context : (useCode && self.screen.enabled ? self.screen.codeText : "")
+                if let study { code = study.context(question: input) + "\n\nТочні фрагменти поточних файлів:\n" + code }
                 if continuingCodeQuestion && code.isEmpty { code = self.lastProjectCode }
                 if useCode, let retrieved, !retrieved.files.isEmpty, !retrieved.context.isEmpty { self.lastProjectCode = retrieved.context }
                 var groundedQuestion = input
@@ -417,12 +432,12 @@ import LocalCopilotCore
                     if let line = editorSnapshot.focusLine { groundedQuestion += ", позиція біля рядка \(line)" }
                     groundedQuestion += ". Відповідай саме про цей символ або рядок, не про сусідній метод."
                 }
-                let prompt = snapshot.systemPrompt + (useCode
+                let prompt = (study == nil ? snapshot.systemPrompt : "Відповідай українською, прямо по суті, зазвичай 2–4 речення, без вступів. " + LabDefenseProfile.instructions) + (useCode
                     ? "\nДля питання про код спирайся на наведений файл і точні рядки. «Тут» означає позицію редактора. Дослівно зберігай умови, `return`, назви змінних і ключі. Якщо питають де реалізовано, назви файл, метод і рядок. Якщо файла для номера рядка немає, коротко уточни. Не вигадуй код."
                     : "")
                 let focusedCode = useCode && (ProjectCodeIndex.namedSymbol(input) != nil || ProjectCodeIndex.requestedLine(input) != nil || ProjectCodeIndex.refersToCurrentCode(input))
-                let contextBudget = min(snapshot.contextCharacters, snapshot.contextTokens * 2, useCode ? (focusedCode ? 4200 : 6000) : 3200)
-                let requestMessages = self.sessionContext.messages(prompt: prompt, history: self.messages, question: groundedQuestion, code: code, topic: self.sessionTopic, budget: contextBudget, includeConversation: !QuestionContextRouter.isSelfContained(input))
+                let contextBudget = min(snapshot.contextCharacters, snapshot.contextTokens * 2, study != nil ? 8000 : (useCode ? (focusedCode ? 4200 : 6000) : 3200))
+                let requestMessages = responseContext.messages(prompt: prompt, history: self.messages, question: groundedQuestion, code: code, topic: self.sessionTopic, budget: contextBudget, includeConversation: context != nil || !QuestionContextRouter.isSelfContained(input))
                 var images: [String] = []
                 // Exact source text needs no visual embedding. Vision remains a fallback
                 // when no project is connected.
@@ -516,6 +531,7 @@ import LocalCopilotCore
     }
     func cancelGeneration() { memoryTask?.cancel(); memoryTask = nil; generationID = UUID(); generationTask?.cancel(); generationTask = nil; generating = false; pendingQuestion = nil }
     func newConversation() async {
+        questionInbox = QuestionInbox()
         await stop(finalize: false); cancelGeneration(); recognizedQuestionNote = ""; autoAnswerStatus = "Автовідповідь: очікування завершеного питання"; messages = []; sessionContext = SessionContext(); sessionTranscript = ""; memorySummary = ""; sessionTopic = ""; lastCodeContext = ""; lastProjectCode = ""; lastQuestionUsedCode = false; questionEditing = false; screen.clear(); session = UUID(); question = ""; answer = ""; thinkingText = ""; latestUtterance = ""
         systemTranscript = ""; microphoneTranscript = ""; systemInterim = ""; microphoneInterim = ""
     }

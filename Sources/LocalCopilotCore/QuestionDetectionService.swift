@@ -22,7 +22,7 @@ public struct QuestionDetectionService: Sendable {
             let words = lead.split(whereSeparator: { $0.isWhitespace || ",:()".contains($0) })
             if (1...5).contains(words.count), !["це ", "ми ", "я ", "вони ", "воно "].contains(where: lead.hasPrefix),
                ![" працює", " виконуються", " виконується", " повертає", " використовує", " є ", " було ", " робить"].contains(where: lead.contains) {
-                let concepts = ["типізаці", "race condition", "promise", "проміс", "промис", "callback", "колбек", "async", "замикан", "closure", "рекурсі", "поліморфізм", "інкапсуляці", "react", "angular", "typescript", "javascript", "sql", "nosql"]
+                let concepts = ["дисперсі", "асиметрі", "ексцес", "довірчий інтервал", "середньоквадратич", "центральний момент", "нульова гіпотеза", "критерій стьюдента", "емпірична функція", "штерджес", "типізаці", "race condition", "promise", "проміс", "промис", "callback", "колбек", "async", "замикан", "closure", "рекурсі", "поліморфізм", "інкапсуляці", "react", "angular", "typescript", "javascript", "sql", "nosql"]
                 if concepts.contains(where: lead.contains) { return true }
                 if let expression = try? NSRegularExpression(pattern: #"\b[a-z_][A-Za-z0-9_]*[A-Z][A-Za-z0-9_]*\b|\b[a-z_][A-Za-z0-9_]*\(\)"#),
                    expression.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil { return true }
@@ -61,6 +61,8 @@ public enum TechnicalQuestionNormalizer {
         let callback = #"\b(?:callback|callbacks|колбек|коллбек|холлбек|калбек|колбека|колбеки)\b"#
         var result = text.replacingOccurrences(of: #"\b(?:естетично|естетична|статично)\s*[-–— ]\s*т[ие]пізація\b"#, with: "статична типізація", options: [.regularExpression, .caseInsensitive])
         result = result.replacingOccurrences(of: #"\bрейс\s*[-–— ]?\s*(?:кондишин|кондішин|кондишн|кондішн|кондиціон)\b"#, with: "race condition", options: [.regularExpression, .caseInsensitive])
+        result = result.replacingOccurrences(of: #"\b(?:ексцез|ексцесс|ексцесc)\b"#, with: "ексцес", options: [.regularExpression, .caseInsensitive])
+        result = result.replacingOccurrences(of: #"\bассиметрія\b"#, with: "асиметрія", options: [.regularExpression, .caseInsensitive])
         guard result.range(of: promise, options: [.regularExpression, .caseInsensitive]) != nil,
               result.range(of: callback, options: [.regularExpression, .caseInsensitive]) != nil else { return result }
         let asyncAwait = #"\b(?:async|асинк|асінк|айсінг|асінг)\s*[,/\s]+\s*(?:await|авейт|овейт|овейд|авейд)\b"#

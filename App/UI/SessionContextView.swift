@@ -73,6 +73,7 @@ struct ProjectContextView: View {
                 if project.busy { ProgressView().controlSize(.small) }
             }
             Text(project.rootPath.isEmpty ? project.status : project.rootPath + " · " + project.status).font(.caption).textSelection(.enabled)
+            if let profile = project.defenseProfile { Label(profile.name, systemImage: "function").font(.caption).foregroundStyle(.blue) }
             if !project.files.isEmpty {
                 HStack {
                     Text("Пошук по всіх файлах папки").font(.caption).foregroundStyle(.secondary)

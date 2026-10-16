@@ -13,6 +13,7 @@ import LocalCopilotCore
     private var index = ProjectCodeIndex(files: [])
     private var epoch = UUID()
     private var refreshTask: Task<Void, Never>?
+    var defenseProfile: LabDefenseProfile? { LabDefenseProfile.detect(root: rootPath, files: files) }
     var speechTerms: String {
         guard !files.isEmpty else { return "" }
         let active = files.first(where: { $0.path == selectedFile })
@@ -27,7 +28,7 @@ import LocalCopilotCore
             result.append(term)
             if result.joined(separator: ", ").count > 700 { break }
         }
-        return result.joined(separator: ", ")
+        return (defenseProfile == nil ? "" : LabDefenseProfile.vocabulary + " ") + result.joined(separator: ", ")
     }
     func observe(_ editor: EditorSnapshot) {
         guard followEditor else { return }
