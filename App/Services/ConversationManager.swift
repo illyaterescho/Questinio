@@ -47,6 +47,24 @@ import LocalCopilotCore
     @Published var sessionTopic = ""
     @Published var sessionTranscript = ""
     @Published var questionInbox = QuestionInbox()
+    @Published var sessionSeconds: TimeInterval = 0
+    @Published var pendingAudioSeconds = 0.0
+    @Published var dialogueStatus = "Питання зберігаються з контекстом розмови"
+    @Published var transcriptCount = 0
+    @Published var recognitionGaps = 0
+    @Published var droppedAudioFrames = 0
+    private let journal = SessionJournal()
+    private var sessionRecords: [DialogueRecord] = []
+    private var journalTask: Task<Void, Never>?
+    private var dialogueTask: Task<Void, Never>?
+    private var semanticTask: Task<Void, Never>?
+    private var semanticToken = UUID()
+    private var pendingDetectedQuestion: QuestionInbox.Entry?
+    private var generatedQuestion: (id: UUID, revision: Int, automatic: Bool)?
+    private var activeSeconds: TimeInterval = 0
+    private var captureBegan: Date?
+    private var seenUtterances = Set<UUID>()
+    private var captureTranscriptPrefix: [AudioSource: String] = [:]
     @Published var memorySummary = "" { didSet { sessionContext.summary = memorySummary } }
     @Published var summarizing = false
     @Published var editedQuestion = ""
@@ -60,6 +78,7 @@ import LocalCopilotCore
     func toggleMySpeaking() {
         guard running, captureSettings.effectiveAudioMode != .system else { return }
         mySpeaking.toggle()
+        if mySpeaking { questionInbox.interrupt(source: "Мікрофон"); semanticTask?.cancel(); semanticToken = UUID() }
         let muted = mySpeaking
         Task { await pipeline.setMicrophoneMuted(muted) }
         microphoneInterim = ""
@@ -117,6 +136,8 @@ import LocalCopilotCore
         }
         capture.onDrop = { [weak self] in
             guard let self else { return }
+            self.droppedAudioFrames = self.capture.droppedFrames
+            self.record(DialogueRecord(source: "Система", text: "Черга захоплення втратила кадри аудіо: \(self.capture.droppedFrames).", kind: "gap"))
             self.diagnostics.log("Audio queue lag: dropped \(self.capture.droppedFrames) frames; capture continues")
         }
         editor.enabled = settings.readWebStorm
@@ -129,6 +150,15 @@ import LocalCopilotCore
         refreshMicrophones()
         Task { await refreshModels(); await refreshHistory(); await refreshApplications() }
         Task { await loadModel() }
+        dialogueTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
+                guard let self else { return }
+                self.advanceDialogue()
+                if !self.running, !self.stopping { self.scheduleMemoryCompression() }
+                self.sessionSeconds = self.activeSeconds + (self.captureBegan.map { Date().timeIntervalSince($0) } ?? 0)
+            }
+        }
         monitorTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(3))
@@ -271,7 +301,7 @@ import LocalCopilotCore
         do { history = try await storage?.records() ?? [] } catch { self.error = error.localizedDescription }
     }
     func clearHistory() async {
-        do { try await storage?.deleteAll(); history = [] } catch { self.error = error.localizedDescription }
+        do { await journalTask?.value; try await storage?.deleteAll(); try await journal.deleteAll(); history = [] } catch { self.error = error.localizedDescription }
     }
     func downloadModel() async {
         guard !running, !starting, !stopping, !modelBusy else { return }
@@ -297,7 +327,7 @@ import LocalCopilotCore
         }
     }
     func start() async {
-        guard !running, !starting, !modelBusy, !diagnostics.testing else { return }
+        guard !running, !starting, !stopping, !modelBusy, !diagnostics.testing else { return }
         starting = true; defer { starting = false }; error = ""
         do {
             if !(await speech.ready) { whisperStatus = "Loading…"; try await speech.load(folder: settings.modelPath); whisperStatus = "Ready · \(whisperModelLabel)" }
@@ -307,7 +337,11 @@ import LocalCopilotCore
             await pipeline.setContextVocabulary(project.speechTerms)
             activeCaptureSettings = snapshot
             running = true; routeSignature = MicrophoneManager.routeSignature()
-            systemTranscript = ""; microphoneTranscript = ""; systemInterim = ""; microphoneInterim = ""; latestUtterance = ""
+            captureBegan = Date()
+            droppedAudioFrames = 0
+            ensureJournalContext()
+            captureTranscriptPrefix = [.system: systemTranscript, .microphone: microphoneTranscript]
+            systemInterim = ""; microphoneInterim = ""
             autoAnswerStatus = "Автовідповідь: очікування завершеного питання"; recognizedQuestionNote = ""
             lastSystemAudio = Date(); lastMicAudio = Date()
             micStatus = capture.microphoneActive ? "Listening" : (snapshot.effectiveAudioMode == .system ? "Disabled" : micStatus)
@@ -323,14 +357,32 @@ import LocalCopilotCore
         guard !starting, !stopping else { return }
         stopping = true; defer { stopping = false }
         running = false; mySpeaking = false
+        if let captureBegan { activeSeconds += Date().timeIntervalSince(captureBegan); self.captureBegan = nil }
         if !finalize { audioTask?.cancel(); await pipeline.cancel() }
         await capture.stop()
         if let audioTask { await audioTask.value }
         audioTask = nil; activeCaptureSettings = nil; refreshMicrophones()
+        let metrics = await pipeline.statistics()
+        let summary = "Capture segment: \(metrics.completedUtterances) utterances; \(capture.droppedFrames) dropped frames; \(metrics.decoderRetries) decoder retries; \(metrics.spilledChunks) cached chunks; peak queue \(Int(metrics.peakQueueSeconds)) s; cache files remaining \(metrics.cacheFiles)."
+        diagnostics.log(summary)
+        if finalize { record(DialogueRecord(source: "Діагностика", text: summary, kind: "diagnostic")) }
+        if finalize { advanceDialogue(force: true) }
+        await journalTask?.value
+        scheduleMemoryCompression()
         micLevel = 0; systemLevel = 0; micStatus = "Stopped"; systemStatus = "Stopped"
+        pendingAudioSeconds = 0; droppedAudioFrames = capture.droppedFrames
         diagnostics.log("Capture stopped; dropped \(capture.droppedFrames) audio frames; \(finalize ? "pending speech decoded" : "pending speech discarded").")
     }
     private func receive(_ event: PipelineEvent) {
+        if event.recognitionGap == true {
+            recognitionGaps += 1
+            record(DialogueRecord(date: event.capturedAt ?? Date(), source: "Система", text: "Не розпізнано фрагмент після повторних спроб. " + (event.error ?? ""), kind: "gap"))
+        }
+        if let pending = event.pendingSeconds { pendingAudioSeconds = pending }
+        if event.fatal == true {
+            dialogueStatus = "Захоплення зупиняється: черга аудіо не може безпечно продовжуватися"
+            Task { await stop() }
+        }
         if let level = event.level {
             if level > Float(settings.vadThreshold) {
                 if event.source == .system { lastSystemAudio = Date(); systemStatus = "Listening" }
@@ -342,14 +394,26 @@ import LocalCopilotCore
             }
         }
         if let update = event.update {
-            if event.source == .system { systemTranscript = update.confirmed; systemInterim = update.interim }
-            else { microphoneTranscript = update.confirmed; microphoneInterim = update.interim }
-            if let completed = update.completedUtterance {
+            let confirmed = String(((captureTranscriptPrefix[event.source] ?? "") + " " + update.confirmed).trimmingCharacters(in: .whitespacesAndNewlines).suffix(24000))
+            if event.source == .system { systemTranscript = confirmed; systemInterim = update.interim }
+            else { microphoneTranscript = confirmed; microphoneInterim = update.interim }
+            let source = event.source == .system ? "Співрозмовник" : "Мікрофон"
+            let utterance = event.utterance ?? UUID()
+            let captured = event.capturedAt ?? Date()
+            if !update.currentUtterance.isEmpty {
+                semanticTask?.cancel(); semanticToken = UUID()
+                questionInbox.observe(update.currentUtterance, source: source, utterance: utterance, final: false, context: sessionContext, at: captured)
+                invalidateReplacedAutomaticAnswer()
+            }
+            if let completed = update.completedUtterance, seenUtterances.insert(utterance).inserted {
                 diagnostics.log("Utterance finalized: \(event.source.rawValue); \(completed.split(whereSeparator: \.isWhitespace).count) words; audio \(String(format: "%.1f", event.finalAudioSeconds ?? 0)) s; whole-utterance decode \(event.wholeUtteranceDecode == true ? "yes" : "no"); auto question \(event.question == nil ? "no" : "yes")")
                 latestUtterance = completed
                 sessionContext.append(speaker: event.source == .system ? "Співрозмовник" : (captureSettings.listeningProfile == .classroom ? "Аудиторія / мікрофон" : "Мікрофон"), text: completed)
                 sessionTranscript = sessionContext.recent
-                questionInbox.append(completed, source: event.source == .system ? "Співрозмовник" : "Мікрофон", context: sessionContext)
+                record(DialogueRecord(id: utterance, date: captured, source: source, text: completed))
+                questionInbox.observe(completed, source: source, utterance: utterance, final: true, context: sessionContext, at: captured)
+                invalidateReplacedAutomaticAnswer()
+                refineDialogue(completed, source: source, utterance: utterance, at: captured)
                 scheduleMemoryCompression()
                 if !settings.automatic { autoAnswerStatus = "Автовідповідь вимкнена" }
                 else if event.source == .microphone && !settings.answerFromMicrophone { autoAnswerStatus = "Для мікрофона автовідповідь вимкнена" }
@@ -359,11 +423,69 @@ import LocalCopilotCore
         }
         if let seconds = event.seconds { decodeSeconds = seconds }
         if let problem = event.error { error = problem; diagnostics.log(problem) }
-        if let question = event.question, settings.automatic {
-            autoAnswerStatus = generating ? "Питання розпізнано · відповідь у черзі" : "Питання розпізнано · генерується відповідь"
-            diagnostics.log("Automatic question from \(event.source.rawValue): \(question)")
-            let resolved = resolveSpeechQuestion(question)
-            if generating || questionEditing { pendingQuestion = resolved } else { generate(resolved) }
+    }
+    private func advanceDialogue(force: Bool = false) {
+        let ready = questionInbox.settle(force: force)
+        invalidateReplacedAutomaticAnswer()
+        for entry in ready {
+            guard settings.automatic, entry.source != "Мікрофон" || settings.answerFromMicrophone else { continue }
+            pendingDetectedQuestion = entry
+        }
+        if !generating, !questionEditing, let entry = pendingDetectedQuestion {
+            pendingDetectedQuestion = nil
+            guard questionInbox.isCurrent(entry.id, revision: entry.revision) else { return }
+            generate(entry.text, context: entry.context, before: entry.updated)
+            generatedQuestion = (entry.id, entry.revision, true)
+            autoAnswerStatus = "Завершене питання · генерується відповідь"
+        }
+    }
+    private func invalidateReplacedAutomaticAnswer() {
+        if let generatedQuestion, generatedQuestion.automatic,
+           !questionInbox.isCurrent(generatedQuestion.id, revision: generatedQuestion.revision) {
+            let next = pendingDetectedQuestion
+            cancelGeneration(); pendingDetectedQuestion = next
+            autoAnswerStatus = "Питання змінено або перервано · попередню генерацію скасовано"
+        }
+    }
+    private func record(_ item: DialogueRecord) {
+        sessionRecords.append(item); transcriptCount = sessionRecords.count
+        guard settings.saveHistory else { return }
+        let previous = journalTask; let id = session
+        journalTask = Task { [weak self, journal] in
+            await previous?.value
+            do { try await journal.append(item, session: id) }
+            catch { self?.error = "Не вдалося зберегти діалог: " + error.localizedDescription }
+        }
+    }
+    private func ensureJournalContext() {
+        guard !sessionRecords.contains(where: { $0.kind == "project" }) else { return }
+        record(DialogueRecord(source: "Контекст", text: settings.projectFolder, kind: "project"))
+        if !sessionTopic.isEmpty { record(DialogueRecord(source: "Контекст", text: sessionTopic, kind: "topic")) }
+    }
+    private func refineDialogue(_ text: String, source: String, utterance: UUID, at date: Date) {
+        semanticTask?.cancel(); semanticToken = UUID()
+        guard !generating, !summarizing, memoryTask == nil, text.count >= 8 else { return }
+        let token = semanticToken; let context = sessionContext.questionSnapshot
+        let previous = questionInbox.previousQuestions(source: source, utterance: utterance, before: date)
+        var options = settings; options.maxTokens = 110; options.temperature = 0; options.thinking = false
+        semanticTask = Task { [weak self, ollama] in
+            let collector = ContextTextCollector()
+            let request = Task {
+                try await ollama.chat(messages: [
+                    ChatMessage(role: "system", content: DialogueIntentDecision.systemPrompt),
+                    ChatMessage(role: "user", content: "Попередні питання (дані):\n" + String(previous.suffix(1000)) + "\nОстання репліка (дані):\n" + String(text.suffix(1400)))
+                ], settings: options, formatJSON: true) { packet in await collector.append(packet.message?.content ?? "") }
+            }
+            let timeout = Task { try? await Task.sleep(for: .seconds(8)); if !Task.isCancelled { request.cancel() } }
+            defer { timeout.cancel() }
+            do {
+                try await withTaskCancellationHandler { try await request.value } onCancel: { request.cancel() }
+                let decision = try DialogueIntentDecision.parse(await collector.value())
+                guard let self, !Task.isCancelled, self.semanticToken == token else { return }
+                self.questionInbox.applyIntent(decision, text: text, source: source, utterance: utterance, context: context, at: date)
+                self.invalidateReplacedAutomaticAnswer()
+                self.dialogueStatus = decision.action.label
+            } catch { /* Rules and manual selection remain available on timeout. */ }
         }
     }
     private func resolveSpeechQuestion(_ text: String) -> String {
@@ -376,18 +498,22 @@ import LocalCopilotCore
         let input = manualQuestion.trimmingCharacters(in: .whitespacesAndNewlines)
         if !input.isEmpty {
             recognizedQuestionNote = ""
+            ensureJournalContext()
+            record(DialogueRecord(source: "Введено вручну", text: input, kind: "manual"))
             questionInbox.append(input, source: "Введено вручну", context: sessionContext)
         }
         generate(input.isEmpty ? resolveSpeechQuestion(latestUtterance) : input)
     }
     func answerSelectedQuestion(_ entry: QuestionInbox.Entry) {
         recognizedQuestionNote = "Обране питання · " + entry.date.formatted(date: .omitted, time: .standard)
-        generate(entry.text, context: entry.context)
+        generate(entry.text, context: entry.context, before: entry.updated)
+        generatedQuestion = (entry.id, entry.revision, false)
     }
-    func generate(_ input: String, context: SessionContext? = nil) {
+    func generate(_ input: String, context: SessionContext? = nil, before cutoff: Date = Date()) {
         guard !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { error = "Enter a question or capture a completed utterance first."; return }
         let useCode = CodeQuestionRouter.needsCode(input, previousCodeQuestion: lastQuestionUsedCode)
         let responseContext = context ?? sessionContext
+        let journalSession = session
         let continuingCodeQuestion = lastQuestionUsedCode && useCode && !QuestionContextRouter.isSelfContained(input)
         lastQuestionUsedCode = useCode
         cancelGeneration()
@@ -398,6 +524,14 @@ import LocalCopilotCore
         generationTask = Task { [weak self, ollama] in
             do {
                 guard let self else { return }
+                var requestContext = responseContext
+                if self.settings.saveHistory, self.transcriptCount > 60 {
+                    await self.journalTask?.value
+                    if let found = try? await self.journal.relevant(question: input, session: journalSession, before: cutoff), !found.isEmpty {
+                        requestContext.summary = String(requestContext.summary.prefix(2500)) + "\nРаніші дослівні репліки з журналу:\n" + found
+                    }
+                    guard self.generationID == id, !Task.isCancelled else { return }
+                }
                 let study = self.project.defenseProfile
                 let needsCurrentEditor = ProjectCodeIndex.refersToCurrentCode(input) || ProjectCodeIndex.requestedLine(input) != nil
                 let editorSnapshot = !useCode || !needsCurrentEditor || self.project.rootPath.isEmpty || !self.screen.enabled ? nil : self.editor.snapshot(root: self.project.rootPath)
@@ -437,7 +571,7 @@ import LocalCopilotCore
                     : "")
                 let focusedCode = useCode && (ProjectCodeIndex.namedSymbol(input) != nil || ProjectCodeIndex.requestedLine(input) != nil || ProjectCodeIndex.refersToCurrentCode(input))
                 let contextBudget = min(snapshot.contextCharacters, snapshot.contextTokens * 2, study != nil ? 8000 : (useCode ? (focusedCode ? 4200 : 6000) : 3200))
-                let requestMessages = responseContext.messages(prompt: prompt, history: self.messages, question: groundedQuestion, code: code, topic: self.sessionTopic, budget: contextBudget, includeConversation: context != nil || !QuestionContextRouter.isSelfContained(input))
+                let requestMessages = requestContext.messages(prompt: prompt, history: self.messages, question: groundedQuestion, code: code, topic: self.sessionTopic, budget: contextBudget, includeConversation: context != nil || !QuestionContextRouter.isSelfContained(input))
                 var images: [String] = []
                 // Exact source text needs no visual embedding. Vision remains a fallback
                 // when no project is connected.
@@ -455,6 +589,7 @@ import LocalCopilotCore
                 self.generating = false; self.generationSeconds = Date().timeIntervalSince(self.generationStarted)
                 self.lastModelTouch = Date()
                 if !self.answer.isEmpty {
+                    self.record(DialogueRecord(source: "Асистент", text: input + "\n" + self.answer, kind: "answer"))
                     self.sessionContext.append(speaker: "Питання", text: input)
                     self.sessionContext.append(speaker: "Підказка асистента", text: self.answer)
                     self.sessionTranscript = self.sessionContext.recent
@@ -479,7 +614,8 @@ import LocalCopilotCore
         }
     }
     private func scheduleMemoryCompression() {
-        guard sessionContext.archived.count >= 1500, !generating, !summarizing, memoryTask == nil else { return }
+        guard !running, !stopping, sessionContext.archived.count >= 1500, !generating, !summarizing, memoryTask == nil else { return }
+        semanticTask?.cancel(); semanticToken = UUID()
         let id = generationID; let options = settings
         memoryTask = Task { [weak self] in
             guard let self else { return }
@@ -529,11 +665,49 @@ import LocalCopilotCore
         }
         if let thought = packet.message?.thinking { thinkingText = String((thinkingText + thought).suffix(12000)) }
     }
-    func cancelGeneration() { memoryTask?.cancel(); memoryTask = nil; generationID = UUID(); generationTask?.cancel(); generationTask = nil; generating = false; pendingQuestion = nil }
+    func cancelGeneration() { semanticTask?.cancel(); semanticToken = UUID(); generatedQuestion = nil; pendingDetectedQuestion = nil; memoryTask?.cancel(); memoryTask = nil; generationID = UUID(); generationTask?.cancel(); generationTask = nil; generating = false; pendingQuestion = nil }
     func newConversation() async {
         questionInbox = QuestionInbox()
         await stop(finalize: false); cancelGeneration(); recognizedQuestionNote = ""; autoAnswerStatus = "Автовідповідь: очікування завершеного питання"; messages = []; sessionContext = SessionContext(); sessionTranscript = ""; memorySummary = ""; sessionTopic = ""; lastCodeContext = ""; lastProjectCode = ""; lastQuestionUsedCode = false; questionEditing = false; screen.clear(); session = UUID(); question = ""; answer = ""; thinkingText = ""; latestUtterance = ""
         systemTranscript = ""; microphoneTranscript = ""; systemInterim = ""; microphoneInterim = ""
+        sessionRecords = []; transcriptCount = 0; activeSeconds = 0; sessionSeconds = 0; pendingAudioSeconds = 0; recognitionGaps = 0; droppedAudioFrames = 0; seenUtterances = []; captureTranscriptPrefix = [:]
+    }
+    func exportDialogue() async {
+        await journalTask?.value
+        let panel = NSSavePanel(); panel.nameFieldStringValue = "Questionio-dialogue.txt"; panel.allowedContentTypes = [.plainText]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { try SessionJournal.export(sessionRecords).write(to: url, atomically: true, encoding: .utf8) }
+        catch { self.error = "Експорт діалогу: " + error.localizedDescription }
+    }
+    func recoverDialogue() async {
+        guard !running, !starting, !stopping else { return }
+        await journalTask?.value
+        do {
+            guard let id = try await journal.latest() else { dialogueStatus = "Збереженого діалогу немає"; return }
+            let records = try await journal.records(session: id)
+            cancelGeneration(); questionInbox = QuestionInbox(); sessionContext = SessionContext()
+            messages = []; question = ""; answer = ""; thinkingText = ""; systemInterim = ""; microphoneInterim = ""
+            recognitionGaps = 0; pendingAudioSeconds = 0; sessionTopic = ""; lastCodeContext = ""; lastProjectCode = ""; lastQuestionUsedCode = false
+            systemTranscript = ""; microphoneTranscript = ""; sessionRecords = records; transcriptCount = records.count
+            seenUtterances = []; session = id
+            for item in records {
+                if item.kind == "project" { if FileManager.default.fileExists(atPath: item.text) { project.connect(item.text) }; continue }
+                if item.kind == "topic" { sessionTopic = item.text; continue }
+                sessionContext.append(speaker: item.source, text: item.text)
+                if item.kind == "manual" { questionInbox.append(item.text, source: item.source, context: sessionContext, at: item.date); continue }
+                if item.kind == "gap" { recognitionGaps += 1; continue }
+                guard item.kind == "speech" else { continue }
+                seenUtterances.insert(item.id)
+                questionInbox.observe(item.text, source: item.source, utterance: item.id, final: true, context: sessionContext, at: item.date)
+                _ = questionInbox.settle(at: item.date.addingTimeInterval(1.5))
+                if item.source == "Співрозмовник" { systemTranscript = String((systemTranscript + " " + item.text).suffix(24000)) }
+                else { microphoneTranscript = String((microphoneTranscript + " " + item.text).suffix(24000)) }
+            }
+            sessionTranscript = sessionContext.recent
+            activeSeconds = max(0, (records.last?.date ?? Date()).timeIntervalSince(records.first?.date ?? Date())); sessionSeconds = activeSeconds
+            memorySummary = ""; latestUtterance = records.last(where: { $0.kind == "speech" })?.text ?? ""
+            dialogueStatus = "Відновлено \(records.count) записів · готово продовжувати"
+        } catch { self.error = "Відновлення діалогу: " + error.localizedDescription }
     }
     func restore(_ record: ConversationRecord) {
         cancelGeneration(); question = record.question; answer = record.answer

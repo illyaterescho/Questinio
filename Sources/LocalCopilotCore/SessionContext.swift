@@ -43,6 +43,18 @@ public struct SessionContext: Sendable {
         archived = String(archived.suffix(60000))
     }
     public var recent: String { turns.map(\.rendered).joined(separator: "\n") }
+    public var questionSnapshot: Self {
+        var snapshot = Self(); snapshot.summary = summary
+        // Copy a bounded excerpt rather than the entire expanding archive into
+        // every question in a 45-minute session. The journal holds the full text.
+        var kept: [Turn] = []; var count = 0
+        for turn in turns.reversed() {
+            guard count + turn.text.count <= 10000 else { break }
+            kept.insert(turn, at: 0); count += turn.text.count
+        }
+        snapshot.turns = kept; snapshot.archived = String(archived.suffix(2500))
+        return snapshot
+    }
     public mutating func consumeArchive(_ snapshot: String, summary: String) {
         guard archived.hasPrefix(snapshot) else { return }
         self.summary = String(summary.prefix(5000))
@@ -77,24 +89,5 @@ public struct SessionContext: Sendable {
         }
         let user = blocks.joined(separator: "\n\n") + "\n\nПоточне питання (відповідай саме на нього):\n" + question
         return [ChatMessage(role: "system", content: system)] + kept + [ChatMessage(role: "user", content: user)]
-    }
-}
-
-public struct QuestionInbox: Sendable {
-    public struct Entry: Identifiable, Sendable {
-        public let id = UUID()
-        public let text: String
-        public let source: String
-        public let date: Date
-        public let context: SessionContext
-    }
-    public private(set) var entries: [Entry] = []
-    public init() {}
-    public mutating func append(_ text: String, source: String, context: SessionContext, at date: Date = Date()) {
-        guard QuestionDetectionService.isQuestion(text) else { return }
-        let normalized = TechnicalQuestionNormalizer.normalize(text).trimmingCharacters(in: .whitespacesAndNewlines)
-        if let last = entries.last, last.source == source, last.text == normalized, date.timeIntervalSince(last.date) < 8 { return }
-        entries.append(Entry(text: normalized, source: source, date: date, context: context))
-        if entries.count > 50 { entries.removeFirst(entries.count - 50) }
     }
 }

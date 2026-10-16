@@ -43,7 +43,7 @@ struct SessionContextView: View {
                     TextEditor(text: $model.memorySummary).frame(minHeight: 100, maxHeight: 180).border(.quaternary)
                     Text("Репліки з позначеним джерелом").font(.headline)
                     ScrollView { Text(model.sessionTranscript.isEmpty ? "Контекст з’явиться після завершених реплік. Нову сесію починає кнопка New session." : model.sessionTranscript).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled) }.frame(minHeight: 180)
-                    Text("Пам’ять та код цієї сесії не відновлюються після закриття застосунку. Save history зберігає питання й відповіді окремо.").font(.caption).foregroundStyle(.secondary)
+                    Text(model.settings.saveHistory ? "Завершені репліки зберігаються локально в повному журналі. «Відновити останній» повертає текст і питання після перезапуску. Код перечитується з підключеної папки." : "Save history вимкнено: повний текст поточної сесії доступний для експорту до закриття застосунку.").font(.caption).foregroundStyle(.secondary)
                 }.frame(minWidth: 250)
             }
         }.padding(20).task { if PermissionsManager.screenStatus == "Allowed" { await screen.refreshWindows() } }

@@ -11,7 +11,7 @@ struct MainView: View {
                 Label("History", systemImage: "clock.arrow.circlepath").tag("History")
                 Label("Diagnostics", systemImage: "stethoscope").tag("Diagnostics")
             }.navigationTitle("Questionio").navigationSplitViewColumnWidth(min: 150, ideal: 170)
-            VStack(alignment: .leading, spacing: 6) { Label("Local processing", systemImage: "lock.shield"); Text("Whisper + Ollama\nNo audio saved").font(.caption).foregroundStyle(.secondary) }.padding()
+            VStack(alignment: .leading, spacing: 6) { Label("Local processing", systemImage: "lock.shield"); Text("Whisper + Ollama\nТимчасовий аудіокеш при затримці").font(.caption).foregroundStyle(.secondary) }.padding()
         } detail: {
             if selection == "Context" { SessionContextView(model: model) }
             else if selection == "History" { HistoryView(model: model) }
@@ -34,6 +34,15 @@ struct MainView: View {
                 Button { Task { if model.running { await model.stop() } else { await model.start() } } } label: { Label(model.stopping ? "Finishing…" : model.starting ? "Starting…" : model.running ? "Stop" : "Start", systemImage: model.running ? "stop.fill" : "play.fill") }.buttonStyle(.borderedProminent).disabled(model.starting || model.stopping || model.modelBusy)
             }
             HStack { StatusPill(title: "Whisper", value: model.whisperStatus); StatusPill(title: "Ollama", value: model.ollamaStatus); Spacer(); Toggle("Automatic answers", isOn: $model.settings.automatic).toggleStyle(.switch).controlSize(.small) }
+            HStack {
+                Text("Діалог \(Int(model.sessionSeconds) / 60):\(String(format: "%02d", Int(model.sessionSeconds) % 60)) · \(model.transcriptCount) записів").monospacedDigit()
+                if model.pendingAudioSeconds > 3 { Text("Черга розпізнавання: \(Int(model.pendingAudioSeconds)) с").foregroundStyle(.orange) }
+                if model.recognitionGaps > 0 { Text("Нерозпізнані фрагменти: \(model.recognitionGaps)").foregroundStyle(.red) }
+                if model.droppedAudioFrames > 0 { Text("Втрачено кадрів: \(model.droppedAudioFrames)").foregroundStyle(.red) }
+                Spacer()
+                Button("Зберегти діалог…") { Task { await model.exportDialogue() } }.disabled(model.transcriptCount == 0)
+                Button("Відновити останній") { Task { await model.recoverDialogue() } }.disabled(model.running || model.starting || model.stopping)
+            }.font(.caption)
             Toggle("Швидкий режим · 4B (може помилятися в коді)", isOn: $model.settings.fastAnswers).font(.caption)
             CompactProjectContext(project: model.project)
             if !model.editor.enabled || model.project.rootPath.isEmpty { CompactCodeContext(screen: model.screen) }
@@ -76,7 +85,7 @@ struct HistoryView: View {
     @State private var confirmDelete = false
     var body: some View {
         VStack(alignment: .leading) {
-            HStack { Text("Conversation history").font(.title2.bold()); Spacer(); Button("Delete all", role: .destructive) { confirmDelete = true }.disabled(model.history.isEmpty) }.padding()
+            HStack { Text("Conversation history").font(.title2.bold()); Spacer(); Button("Delete all", role: .destructive) { confirmDelete = true } }.padding()
             List(model.history) { record in
                 VStack(alignment: .leading, spacing: 8) {
                     HStack { Text(record.date.formatted()).font(.caption).foregroundStyle(.secondary); Spacer(); Button("Continue") { model.restore(record) } }
@@ -84,7 +93,7 @@ struct HistoryView: View {
                     Text(record.answer).textSelection(.enabled)
                 }.padding(.vertical, 8)
             }
-        }.alert("Delete all local history?", isPresented: $confirmDelete) { Button("Delete", role: .destructive) { Task { await model.clearHistory() } }; Button("Cancel", role: .cancel) {} } message: { Text("This removes saved questions and answers from this Mac.") }
+        }.alert("Delete all local history?", isPresented: $confirmDelete) { Button("Delete", role: .destructive) { Task { await model.clearHistory() } }; Button("Cancel", role: .cancel) {} } message: { Text("This permanently removes saved questions, answers, and full dialogue journals from this Mac.") }
     }
 }
 
@@ -148,28 +157,32 @@ struct CompactProjectContext: View {
 struct QuestionInboxView: View {
     @ObservedObject var model: ConversationManager
     var compact = false
+    @State private var search = ""
+    private var visible: [QuestionInbox.Entry] { model.questionInbox.entries.reversed().filter { search.isEmpty || $0.text.localizedCaseInsensitiveContains(search) } }
     var body: some View {
         if compact {
             Menu("Питання діалогу · \(model.questionInbox.entries.count)") {
                 ForEach(model.questionInbox.entries.reversed()) { item in
-                    Button(item.text) { model.answerSelectedQuestion(item) }
+                    Button("[\(item.state.rawValue)] " + item.text) { model.answerSelectedQuestion(item) }
                 }
             }.disabled(model.questionInbox.entries.isEmpty)
         } else {
             VStack(alignment: .leading, spacing: 5) {
                 Text("Питання діалогу · натисніть для відповіді").font(.caption.bold())
+                Text(model.dialogueStatus).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
                 if model.questionInbox.entries.isEmpty {
                     Text("Після Start тут з’являться розпізнані питання. Для відповіді лише за кліком вимкніть Automatic answers.").font(.caption).foregroundStyle(.secondary)
                 } else {
+                    if model.questionInbox.entries.count > 5 { TextField("Знайти питання…", text: $search).textFieldStyle(.roundedBorder) }
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 6) {
-                            ForEach(model.questionInbox.entries.reversed()) { item in
+                            ForEach(visible) { item in
                                 Button { model.answerSelectedQuestion(item) } label: {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(item.text).lineLimit(3).multilineTextAlignment(.leading)
-                                        Text(item.source + " · " + item.date.formatted(date: .omitted, time: .shortened)).font(.caption2).foregroundStyle(.secondary)
+                                        Text(item.state.rawValue + " · " + item.source + " · " + item.date.formatted(date: .omitted, time: .shortened)).font(.caption2).foregroundStyle(.secondary)
                                     }.frame(maxWidth: .infinity, alignment: .leading)
-                                }.buttonStyle(.bordered).tint(.blue)
+                                }.buttonStyle(.bordered).tint(item.state == .ready ? .blue : item.state == .draft ? .orange : .gray)
                             }
                         }
                     }.frame(maxHeight: 130)

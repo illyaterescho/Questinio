@@ -15,8 +15,10 @@ public struct AudioChunk: Sendable {
     public let overlapsPrevious: Bool
     public let replacesUtterance: Bool
     public let fallbackSamples: [Float]?
-    public init(samples: [Float], source: AudioSource, final: Bool, utterance: UUID, window: Int, overlapsPrevious: Bool, replacesUtterance: Bool = false, fallbackSamples: [Float]? = nil) {
-        self.samples = samples; self.source = source; self.final = final; self.utterance = utterance; self.window = window; self.overlapsPrevious = overlapsPrevious; self.replacesUtterance = replacesUtterance; self.fallbackSamples = fallbackSamples
+    public let isPreview: Bool
+    public let capturedAt: Date
+    public init(samples: [Float], source: AudioSource, final: Bool, utterance: UUID, window: Int, overlapsPrevious: Bool, replacesUtterance: Bool = false, fallbackSamples: [Float]? = nil, isPreview: Bool = false, capturedAt: Date = Date()) {
+        self.samples = samples; self.source = source; self.final = final; self.utterance = utterance; self.window = window; self.overlapsPrevious = overlapsPrevious; self.replacesUtterance = replacesUtterance; self.fallbackSamples = fallbackSamples; self.isPreview = isPreview; self.capturedAt = capturedAt
     }
 }
 public struct VoiceActivityDetector: Sendable {
@@ -79,7 +81,7 @@ public struct AudioBufferManager: Sendable {
         // Only one interim decode per window, then confirm at pause / max duration.
         if voicedSamples >= 32000 && lastPreviewCount == 0 {
             lastPreviewCount = buffer.count
-            return [AudioChunk(samples: buffer, source: frame.source, final: false, utterance: id, window: window, overlapsPrevious: overlap)]
+            return [AudioChunk(samples: buffer, source: frame.source, final: false, utterance: id, window: window, overlapsPrevious: overlap, isPreview: true)]
         }
         return []
     }

@@ -149,7 +149,7 @@ Core Audio Tap захоплює цифровий звук процесів, не
   лише після завершення запитання; запитання користувача з мікрофона за замовчуванням
   не викликають генерацію. Це можна ввімкнути окремо.
 - **Generate Answer** працює з введеним текстом, або останньою завершеною фразою.
-  «Питання діалогу» збирає до 50 розпізнаних питань у межах поточної сесії,
+  «Питання діалогу» показує до 600 останніх питань у межах поточної сесії,
   навіть коли Automatic answers вимкнено. Натискання запускає відповідь із
   збереженим на момент питання контекстом діалогу. У floating-вікні є меню питань.
   Перемикач Automatic answers вимкніть для відповідей лише за кліком.
@@ -166,12 +166,41 @@ Core Audio Tap захоплює цифровий звук процесів, не
 
 Налаштування джерел, мови, VAD та фрагментів змінюйте при зупиненому захопленні.
 
+## Тривалий діалог і перебивання
+
+Проміжний текст формує чернетку питання. Після фіналізації звуку застосунок
+залишає ще 1.4 s на продовження; фраза «чому ми ділимо на…» лишається чернеткою.
+Продовження від того самого джерела об'єднується з питанням. Явні «стоп, краще…»,
+«ні, точніше…» позначають попереднє питання перерваним або переформульованим.
+Якщо автовідповідь на нього вже почалася, вона скасовується. Репліки з різних
+аудіоканалів не зливаються. У спільному мікрофоні людей автоматично не розділяємо.
+
+Поки відповідь не генерується, локальна модель додатково класифікує останню
+репліку: нове питання, продовження, заміна, відмова або опис. Вона має повернути
+дослівну цитату; застарілий результат і невірний JSON ігноруються. Запит має
+8-секундний дедлайн і скасовується при новому мовленні чи запуску відповіді.
+Це евристики й локальна модель, тому неявна зміна наміру все ще може помилятися;
+усі питання залишаються доступними для ручного вибору зі статусами.
+
+Повні завершені репліки, відповіді та позначки пропусків пишуться в локальний
+текстовий журнал при Save history ON. «Зберегти діалог» експортує його, а
+«Відновити останній» повертає діалог і питання після перезапуску. Під час довгого
+сеансу модель отримує обмежений свіжий контекст і релевантні ранні репліки з
+журналу; повний 45-хвилинний текст не поміщається в кожний запит до моделі.
+Стискання пам'яті виконується після зупинки захоплення, щоб не конкурувати з ним.
+
+План живого 45-хвилинного прогону: [docs/LIVE_DEFENSE_TEST.md](docs/LIVE_DEFENSE_TEST.md).
+`swift test --filter DialogueReliabilityTests` програє 45 хвилин віртуального PCM
+зі штучним декодером, перевіряє перебивання, повний журнал і перевантаження.
+Це не перевірка живої точності Whisper, навушників чи нагріву протягом 45 хвилин.
+
 ## Архітектура
 
 `Sources/LocalCopilotCore` містить тестовані SettingsManager, StorageManager
 (actor / SQLite), OllamaService (actor / URLSession), SpeechRecognitionService
 (actor / WhisperKit), VoiceActivityDetector, AudioBufferManager,
-TranscriptAssembler, QuestionDetectionService та ThinkingStreamParser.
+TranscriptAssembler, QuestionDetectionService, QuestionInbox, SessionJournal,
+SpeechPipeline та ThinkingStreamParser.
 
 `App/Audio` — MicrophoneManager, SystemAudioManager, AudioCaptureManager і
 PCM-конвертер до mono float32 16 kHz. Мікрофон і системний звук не змішуються.
@@ -180,11 +209,15 @@ PCM-конвертер до mono float32 16 kHz. Мікрофон і систе�
 зникнення вибраного застосунку не видаляє сеанс.
 
 `App/Services` — ConversationManager (MVVM / MainActor, injection сервісів),
-SpeechPipeline (actor), PermissionsManager, DiagnosticsManager, HotkeyManager.
-Один Whisper обробляє до восьми очікуваних фрагментів; interim-фрагменти
-коалесуються, перевантаження показується в Diagnostics. Черга аудіосемплів також
-обмежена. Текст вікна обмежено 24 000 символами на джерело, LLM-контекст —
-налаштованим бюджетом. UI не чекає inference синхронно.
+PermissionsManager, DiagnosticsManager, HotkeyManager. SpeechPipeline — actor
+у тестованому core. Один декодер зберігає порядок завершених фрагментів;
+під тиском відкидаються лише замінні previews, а не вікна з новими словами.
+Черга тримає до 90 s семплів у RAM (без поточного декоду й активних буферів),
+решту переносить у приватний тимчасовий кеш. При перевищенні 512 MB або
+недоступному кеші показується помилка й захоплення зупиняється для обробки черги.
+Текст вікна обмежено 24 000 символами на джерело, повний текст — у журналі.
+UI не чекає inference синхронно; після двох повторних невдалих декодувань
+фрагмент явно позначається як пропуск, а конвеєр продовжує роботу.
 
 VAD базується на RMS; пауза типово 0.85 s, максимальне вікно 6 s, перекриття 0.5 s.
 Проміжне розпізнавання виконується не частіше одного разу на вікно після 2 s
@@ -202,12 +235,16 @@ RMS VAD може реагувати на музику й фонові шуми. 
 
 - `settings.json` — налаштування, atomic writes.
 - `history.sqlite` — завершені запитання й відповіді, без аудіозаписів.
+- `Sessions/*.jsonl` — повні завершені репліки, відповіді та діагностика сесії.
 - `Models/` — Whisper Core ML та токенізатор.
 
-History → Delete all видаляє збережені відповіді з SQLite з secure_delete/VACUUM.
+History → Delete all видаляє відповіді з SQLite та текстові журнали сесій.
 Settings → Privacy → Save local history вимикає нові записи. Діагностичний журнал
 залишається в оперативній пам'яті; його вміст можна скопіювати вручну.
-Звук не зберігається; мовна модель не має інструментів виконання shell-команд.
+При перевантаженні PCM тимчасово потрапляє в системну temp-папку
+`questionio-speech-*` (папка 0700, файли 0600). Файли видаляються після декодування
+і нормальної зупинки; залишки після збою старші за добу прибираються на запуску.
+Повний аудіозапис захисту не ведеться. Модель не має shell-інструментів.
 
 ## Ручні acceptance-тести
 
@@ -343,6 +380,6 @@ a repeated question is suppressed, or microphone auto-answer is disabled.
 - Classroom uses the microphone and enables automatic answers. With the initial default input it prefers the available built-in MacBook microphone. Select another input before Start when needed. The speaking-pause button / Control-Option-Command-M pauses microphone recognition, discards unfinished microphone audio, and resumes on another press. This is manual turn separation, not automatic identification of people sharing a microphone.
 - Custom preserves manual System/Microphone/Both settings; Both includes your microphone only with the capture-my-voice checkbox.
 - Context / Code: set a topic, select a window and capture, or select a region / open a UTF-8 source file / paste code. Correct OCR manually when needed. Automatic capture updates the selected source every 5 seconds and before answering. Images stay in RAM and go only to the local model; Vision-capable models receive images, other models use OCR. qwen3.5:9b on this Mac supports Vision.
-- Recent turns, current code and a summary of older turns inform follow-up answers. Model context remains finite; summaries may lose details. Current-session code/topic/memory are not restored after quitting. New session clears them. Save history stores questions and answers separately.
+- Recent turns, current code and retrieved journal excerpts inform follow-up answers. Model context remains finite; summaries may lose details. Restore last dialogue recovers saved final text/questions and the connected project path; current code is reread from disk. New session clears active state while saved journals remain available.
 - The answer pencil edits the recognized question and retries. General/JavaScript/Python/SQL vocabulary and custom terms condition ASR; set them before Start.
 - Default audio-route or sample-rate changes reopen active audio sources. Silence means waiting for sound. Disconnecting an explicitly selected microphone may require choosing an available input.

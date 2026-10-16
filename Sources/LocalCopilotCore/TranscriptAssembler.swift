@@ -3,6 +3,7 @@ public struct TranscriptUpdate: Sendable {
     public var confirmed: String
     public var interim: String
     public var completedUtterance: String?
+    public var currentUtterance: String = ""
 }
 public struct TranscriptAssembler: Sendable {
     public private(set) var confirmed = ""
@@ -59,7 +60,7 @@ public struct TranscriptAssembler: Sendable {
             windowText = ""; interim = ""; utterance = nil; utteranceText = ""
             return TranscriptUpdate(confirmed: confirmed, interim: interim, completedUtterance: completed.isEmpty ? nil : completed)
         }
-        return TranscriptUpdate(confirmed: confirmed, interim: interim, completedUtterance: nil)
+        return TranscriptUpdate(confirmed: confirmed, interim: interim, completedUtterance: nil, currentUtterance: (utteranceText + " " + windowText).trimmingCharacters(in: .whitespacesAndNewlines))
     }
     public mutating func discontinuity() {
         // A dropped frame or disconnected device invalidates only provisional

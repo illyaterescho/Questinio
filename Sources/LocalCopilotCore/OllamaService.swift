@@ -93,13 +93,14 @@ public actor OllamaService {
         }
         return result + [ChatMessage(role: "assistant", content: "<think>\n</think>\n\n")]
     }
-    public func chat(messages: [ChatMessage], settings: CopilotSettings, images: [String] = [], onPacket: @Sendable (OllamaPacket) async -> Void) async throws {
+    public func chat(messages: [ChatMessage], settings: CopilotSettings, images: [String] = [], formatJSON: Bool = false, onPacket: @Sendable (OllamaPacket) async -> Void) async throws {
         let thinkingSupported = try await supportsThinking(model: settings.model)
         let requestMessages = Self.requestMessages(messages, model: settings.model, thinking: settings.thinking, supported: thinkingSupported)
         var serializedMessages: [[String: Any]] = requestMessages.map { ["role": $0.role, "content": $0.content] }
         if !images.isEmpty, let index = requestMessages.lastIndex(where: { $0.role == "user" }) { serializedMessages[index]["images"] = images }
         var body: [String: Any] = ["model": settings.model, "messages": serializedMessages, "stream": true, "keep_alive": Self.keepAlive, "options": ["temperature": settings.temperature, "num_predict": settings.maxTokens > 0 ? settings.maxTokens : -1, "num_ctx": settings.contextTokens]]
         if thinkingSupported { body["think"] = settings.thinking }
+        if formatJSON { body["format"] = "json" }
         var request = URLRequest(url: base.appendingPathComponent("api/chat"))
         request.httpMethod = "POST"; request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
