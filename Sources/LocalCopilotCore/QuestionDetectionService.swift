@@ -6,6 +6,9 @@ public struct QuestionDetectionService: Sendable {
     public static func isQuestion(_ text: String) -> Bool {
         let value = TechnicalQuestionNormalizer.normalize(text).lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         guard value.unicodeScalars.contains(where: CharacterSet.letters.contains) else { return false }
+        // “Чим менша відстань, тим краща модель” is a correlation, not
+        // an interrogative “Чим відрізняються…”. Whisper may add a question mark.
+        if isComparativeStatement(value) { return false }
         if value.contains("?") { return true }
         if ProjectCodeIndex.requestedLine(value) != nil,
            ["що", "шо", "чому", "як", "де", "значить", "означає", "робить", "поясни", "поясніть", "скажи", "скажіть"].contains(where: value.contains) { return true }
@@ -42,6 +45,10 @@ public struct QuestionDetectionService: Sendable {
             if tail.range(of: desiredOutcome, options: .regularExpression) != nil { return true }
         }
         return false
+    }
+    public static func isComparativeStatement(_ text: String) -> Bool {
+        let value = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.range(of: #"^(?:(?:а|і|й)\s+)?чим\b[^.!?;\n]{1,180}\bтим\b[^.!?;\n]*[.!?]?$"#, options: .regularExpression) != nil
     }
     // Called only for utterances completed by VAD pause, never for individual tokens.
     public mutating func completed(_ text: String, at time: Date = Date()) -> String? {

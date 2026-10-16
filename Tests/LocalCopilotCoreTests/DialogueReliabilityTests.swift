@@ -3,6 +3,64 @@ import XCTest
 
 final class DialogueReliabilityTests: XCTestCase {
     let teacher = "Співрозмовник"
+    private let distanceQuestion = "Чому саме найменше d означає кращий закон? Бо d = max_fx_fx, показує найбільшу відстань між емпіричною функцією розподілу і теоретичною."
+    private let distanceExplanation = "Чим вона менша, тим ближче теоретична модель до реальних даних."
+    func testObservedDistanceExplanationStaysInOneQuestionAfterPause() {
+        var inbox = QuestionInbox(); let t = Date(); let context = SessionContext()
+        inbox.observe(distanceQuestion, source: teacher, utterance: UUID(), final: true, context: context, at: t)
+        let original = inbox.settle(at: t.addingTimeInterval(2))[0]
+        inbox.observe(distanceExplanation, source: teacher, utterance: UUID(), final: true, context: context, at: t.addingTimeInterval(5.877))
+        XCTAssertEqual(inbox.entries.count, 1)
+        XCTAssertEqual(inbox.entries[0].id, original.id)
+        XCTAssertEqual(inbox.entries[0].text, distanceQuestion + " " + distanceExplanation)
+        XCTAssertFalse(inbox.isCurrent(original.id, revision: original.revision))
+        XCTAssertEqual(inbox.settle(at: t.addingTimeInterval(8)).count, 1)
+    }
+    func testComparativePreviewIsFoldedAndFinalCorrectionDoesNotDuplicate() {
+        var inbox = QuestionInbox(); let t = Date(); let context = SessionContext(); let tail = UUID()
+        inbox.observe(distanceQuestion, source: teacher, utterance: UUID(), final: true, context: context, at: t)
+        inbox.observe("Чим вона менша", source: teacher, utterance: tail, final: false, context: context, at: t.addingTimeInterval(4))
+        XCTAssertEqual(inbox.entries.count, 2)
+        inbox.observe("Чим вона менша, тим ближче модель", source: teacher, utterance: tail, final: false, context: context, at: t.addingTimeInterval(5))
+        inbox.observe(distanceExplanation, source: teacher, utterance: tail, final: true, context: context, at: t.addingTimeInterval(6))
+        XCTAssertEqual(inbox.entries.count, 1)
+        XCTAssertEqual(inbox.entries[0].text, distanceQuestion + " " + distanceExplanation)
+    }
+    func testStandaloneComparisonIsNotAQuestionEvenWithWhisperQuestionMark() throws {
+        for text in [distanceExplanation, "Чим менша відстань тим краща модель?", "І чим більше даних, тим точніша оцінка."] {
+            XCTAssertFalse(QuestionDetectionService.isQuestion(text))
+            var inbox = QuestionInbox(); let id = UUID(); let t = Date(); let context = SessionContext()
+            inbox.observe("Чим менша відстань", source: teacher, utterance: id, final: false, context: context, at: t)
+            inbox.observe(text, source: teacher, utterance: id, final: true, context: context, at: t.addingTimeInterval(2))
+            XCTAssertTrue(inbox.entries.isEmpty)
+            let mistakenModel = try DialogueIntentDecision.parse("{\"action\":\"new_question\",\"evidence\":\"Чим\"}")
+            inbox.applyIntent(mistakenModel, text: text, source: teacher, utterance: id, context: context, at: t.addingTimeInterval(3))
+            XCTAssertTrue(inbox.entries.isEmpty)
+        }
+    }
+    func testExplanationJoinsButNextRealQuestionRemainsSeparate() {
+        var inbox = QuestionInbox(); let t = Date(); let context = SessionContext()
+        inbox.observe("Чому обираємо найменшу відстань?", source: teacher, utterance: UUID(), final: true, context: context, at: t)
+        inbox.observe("Бо вона характеризує відхилення моделі від даних.", source: teacher, utterance: UUID(), final: true, context: context, at: t.addingTimeInterval(3))
+        XCTAssertEqual(inbox.entries.count, 1)
+        XCTAssertTrue(inbox.entries[0].text.contains("Бо вона"))
+        for (i, text) in ["Чим відрізняються емпірична і теоретична функції?", "А чому саме максимальна відстань?"].enumerated() {
+            XCTAssertTrue(QuestionDetectionService.isQuestion(text))
+            inbox.observe(text, source: teacher, utterance: UUID(), final: true, context: context, at: t.addingTimeInterval(Double(4 + i)))
+        }
+        XCTAssertEqual(inbox.entries.count, 3)
+    }
+    func testExplanationDoesNotJoinOtherSourceOrOldQuestion() {
+        let t = Date(); let context = SessionContext()
+        for (source, delay) in [("Мікрофон", 3.0), (teacher, 30.0)] {
+            var inbox = QuestionInbox()
+            inbox.observe(distanceQuestion, source: teacher, utterance: UUID(), final: true, context: context, at: t)
+            inbox.observe(distanceExplanation, source: source, utterance: UUID(), final: true, context: context, at: t.addingTimeInterval(delay))
+            XCTAssertEqual(inbox.entries.count, 1)
+            XCTAssertEqual(inbox.entries[0].text, distanceQuestion)
+        }
+        XCTAssertTrue(QuestionDetectionService.isQuestion(distanceExplanation + " Чому так відбувається?"))
+    }
     func testManualQuestionDoesNotTriggerAnotherAutomaticAnswer() {
         var inbox = QuestionInbox(); let t = Date()
         inbox.append("Що означає ексцес?", source: "Введено вручну", context: SessionContext(), at: t)

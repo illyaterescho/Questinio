@@ -61,6 +61,23 @@ public struct QuestionInbox: Sendable {
             replaced = replaced ?? replacementTargets[utterance]
             if text.isEmpty { return }
         }
+        if replaced == nil, continuationBase[utterance] == nil, Self.explains(text) {
+            let currentID = utterances[utterance]
+            if let previous = entries.last(where: {
+                $0.source == source && $0.id != currentID && ($0.state == .draft || $0.state == .ready)
+                    && (0..<8).contains(date.timeIntervalSince($0.updated))
+            }) {
+                // A preview such as “Чим вона менша…” may have looked like a
+                // question before “тим” arrived. Fold that provisional card
+                // into the original question, rather than leaving a duplicate.
+                if let currentID { removeProvisionalEntry(currentID) }
+                continuationBase[utterance] = previous.text
+                utterances[utterance] = previous.id; active[source] = previous.id
+            } else if QuestionDetectionService.isComparativeStatement(text) {
+                if let currentID { removeProvisionalEntry(currentID) }
+                return
+            }
+        }
         if let id = utterances[utterance], let i = entries.firstIndex(where: { $0.id == id }) {
             guard entries[i].state != .interrupted && entries[i].state != .superseded else { return }
             let updated = continuationBase[utterance].map { $0 + " " + text } ?? text
@@ -123,6 +140,7 @@ public struct QuestionInbox: Sendable {
         let previous = entries.lastIndex { $0.source == source && $0.id != currentID && date.timeIntervalSince($0.updated) >= 0 && date.timeIntervalSince($0.updated) < 30 && ($0.state == .ready || $0.state == .draft) }
         switch decision.action {
         case .question, .replace:
+            guard !QuestionDetectionService.isComparativeStatement(text) else { return }
             let id = currentID ?? insert(TechnicalQuestionNormalizer.normalize(text), source: source, context: context, date: date, final: true, state: .draft)
             utterances[utterance] = id
             if decision.action == .replace, let previous, let current = entries.firstIndex(where: { $0.id == id }), previous != current {
@@ -153,6 +171,19 @@ public struct QuestionInbox: Sendable {
         continuationBase = continuationBase.filter { liveUtterances.contains($0.key) }
         active = active.filter { ids.contains($0.value) }
         return id
+    }
+    private mutating func removeProvisionalEntry(_ id: UUID) {
+        entries.removeAll { $0.id == id }
+        let removed = Set(utterances.filter { $0.value == id }.keys)
+        utterances = utterances.filter { $0.value != id }
+        continuationBase = continuationBase.filter { !removed.contains($0.key) }
+        active = active.filter { $0.value != id }
+    }
+    private static func explains(_ text: String) -> Bool {
+        if QuestionDetectionService.isComparativeStatement(text) { return true }
+        guard !QuestionDetectionService.isQuestion(text) else { return false }
+        let lead = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        return ["бо ", "оскільки ", "тому що ", "адже ", "тобто ", "це означає ", "іншими словами "].contains(where: lead.hasPrefix)
     }
     private static func continues(_ text: String) -> Bool {
         let s = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
