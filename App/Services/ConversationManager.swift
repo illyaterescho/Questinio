@@ -566,7 +566,7 @@ import LocalCopilotCore
                     if let line = editorSnapshot.focusLine { groundedQuestion += ", позиція біля рядка \(line)" }
                     groundedQuestion += ". Відповідай саме про цей символ або рядок, не про сусідній метод."
                 }
-                let prompt = (study == nil ? snapshot.systemPrompt : "Відповідай українською, прямо по суті, зазвичай 2–4 речення, без вступів. " + LabDefenseProfile.instructions) + (useCode
+                let prompt = (study == nil ? snapshot.systemPrompt : LabDefenseProfile.answerPrompt) + (useCode
                     ? "\nДля питання про код спирайся на наведений файл і точні рядки. «Тут» означає позицію редактора. Дослівно зберігай умови, `return`, назви змінних і ключі. Якщо питають де реалізовано, назви файл, метод і рядок. Якщо файла для номера рядка немає, коротко уточни. Не вигадуй код."
                     : "")
                 let focusedCode = useCode && (ProjectCodeIndex.namedSymbol(input) != nil || ProjectCodeIndex.requestedLine(input) != nil || ProjectCodeIndex.refersToCurrentCode(input))
@@ -582,8 +582,15 @@ import LocalCopilotCore
                 self.diagnostics.log("Code route: \(useCode ? "code" : "general"); files: \(retrieved?.files.joined(separator: ", ") ?? "none"); retrieval \(String(format: "%.3f", Date().timeIntervalSince(retrievalStart))) s; model: \(snapshot.model)")
                 guard self.generationID == id, !Task.isCancelled else { return }
                 self.diagnostics.log("Answer context: \(self.screen.enabled ? self.screen.sourceName : "disabled"); images: \(images.count); memory: \(self.memorySummary.count) chars")
-                try await ollama.chat(messages: requestMessages, settings: snapshot, images: images) { [weak self] packet in
-                    await self?.receivePacket(packet, id: id)
+                if study != nil, let card = LabDefenseGuide.exactCard(question: input), LabDefenseGuide.matchesReviewedSources(self.project.files) {
+                    self.answer = card.answer
+                    self.firstTokenSeconds = Date().timeIntervalSince(self.generationStarted)
+                    self.recognizedQuestionNote = "Перевірена відповідь · довідка захисту ЛР2"
+                    self.diagnostics.log("Reviewed defense answer: \(card.id); exact question and source fingerprints matched")
+                } else {
+                    try await ollama.chat(messages: requestMessages, settings: snapshot, images: images) { [weak self] packet in
+                        await self?.receivePacket(packet, id: id)
+                    }
                 }
                 guard self.generationID == id, !Task.isCancelled else { return }
                 self.generating = false; self.generationSeconds = Date().timeIntervalSince(self.generationStarted)

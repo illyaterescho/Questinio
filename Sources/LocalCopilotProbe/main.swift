@@ -4,7 +4,28 @@ import LocalCopilotCore
     static func main() async {
         do {
             let args = CommandLine.arguments
-            if args.contains("--download") {
+            if args.contains("--defense-eval") || args.contains("--defense-question") {
+                var settings = try SettingsManager().load()
+                if let index = args.firstIndex(of: "--model"), args.count > index + 1 { settings.model = args[index+1] }
+                let index = try ProjectCodeIndex.load(root: URL(fileURLWithPath: settings.projectFolder))
+                guard let profile = LabDefenseProfile.detect(root: settings.projectFolder, files: index.files) else { throw CopilotError.message("Connect lab1_iad_pharmacy before the defense probe") }
+                let questions: [(Int, String)]
+                if let index = args.firstIndex(of: "--defense-question"), args.count > index + 1 { questions = [(0, args[index+1])] }
+                else { questions = LabDefenseGuide.cards.map { ($0.id, $0.question) } }
+                let service = OllamaService()
+                for (id, question) in questions {
+                    let start = Date(); let collector = DefenseProbeResult()
+                    let source = index.search(question: question, active: nil, budget: 4800).context
+                    let messages = SessionContext().messages(prompt: LabDefenseProfile.answerPrompt, history: [], question: question, code: profile.context(question: question) + "\n\nТочні фрагменти поточних файлів:\n" + source, topic: "", budget: min(settings.contextCharacters, settings.contextTokens * 2, 8000))
+                    let verified = args.contains("--use-reviewed") && LabDefenseGuide.matchesReviewedSources(index.files) ? LabDefenseGuide.exactCard(question: question) : nil
+                    if let verified { await collector.append(verified.answer, started: start) }
+                    else { try await service.chat(messages: messages, settings: settings) { packet in await collector.append(packet.message?.content ?? "", started: start) } }
+                    let (answer, first) = await collector.result()
+                    let record: [String: Any] = ["id": id, "question": question, "route": verified == nil ? "model" : "reviewed", "reference_ids": LabDefenseGuide.matching(question).map(\.id), "answer": answer, "first_token_seconds": first ?? -1, "total_seconds": Date().timeIntervalSince(start)]
+                    print(String(decoding: try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys, .withoutEscapingSlashes]), as: UTF8.self))
+                    fflush(stdout)
+                }
+            } else if args.contains("--download") {
                 let speech = SpeechRecognitionService()
                 let variant = args.firstIndex(of: "--variant").flatMap { args.count > $0 + 1 ? args[$0+1] : nil } ?? "openai_whisper-small"
                 print("Downloading \(variant)")
@@ -38,6 +59,16 @@ import LocalCopilotCore
             }
         } catch { fputs("ERROR: \(error.localizedDescription)\n", stderr); exit(1) }
     }
+}
+actor DefenseProbeResult {
+    private var text = ""
+    private var first: Double?
+    func append(_ token: String, started: Date) {
+        guard !token.isEmpty else { return }
+        if first == nil { first = Date().timeIntervalSince(started) }
+        text += token
+    }
+    func result() -> (String, Double?) { (text, first) }
 }
 actor FirstTokenTimer {
     let start: Date; var first = true
