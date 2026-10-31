@@ -48,6 +48,15 @@ import LocalCopilotCore
         epoch = UUID(); rootPath = path; selectedFile = ""; files = []; index = ProjectCodeIndex(files: []); matches = []
         onRootChanged?(path); refreshTask?.cancel()
         guard !path.isEmpty else { status = "Папку проєкту не підключено"; return }
+        refreshTask = Task { [weak self] in await self?.refresh() }
+        if watching { startWatching() }
+    }
+    // Rescan every 8 s only during capture; idle app does no disk work.
+    private var watching = false
+    func startWatching() {
+        watching = true
+        guard !rootPath.isEmpty else { return }
+        refreshTask?.cancel()
         refreshTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }; await self.refresh()
@@ -55,6 +64,7 @@ import LocalCopilotCore
             }
         }
     }
+    func stopWatching() { watching = false; refreshTask?.cancel(); refreshTask = nil }
     func refresh() async {
         guard !rootPath.isEmpty, !busy else { return }
         let id = epoch; let path = rootPath; busy = true; defer { busy = false }
@@ -63,7 +73,7 @@ import LocalCopilotCore
             guard id == epoch else { return }
             index = fresh; files = fresh.files
             if !selectedFile.isEmpty && !files.contains(where: { $0.path == selectedFile }) { selectedFile = "" }
-            status = "\(files.count) файлів · точні рядки з диска · оновлення кожні 8 с"
+            status = "\(files.count) файлів · точні рядки з диска · оновлюється під час запису"
         } catch { guard id == epoch else { return }; index = ProjectCodeIndex(files: []); files = []; selectedFile = ""; status = error.localizedDescription }
     }
     func context(question: String, source: String, visible: String, editor: EditorSnapshot? = nil) -> CodeSearchResult {

@@ -169,7 +169,8 @@ import LocalCopilotCore
                     Task { await self.refreshModels() }
                 }
                 let activeModel = self.settings.fastAnswers && self.models.contains(where: { $0.name == self.settings.fastModel }) ? self.settings.fastModel : self.settings.model
-                if self.lastModelTouch != .distantPast && !self.generating && !self.summarizing && !self.periodicWarmup && self.models.contains(where: { $0.name == activeModel }) && Date().timeIntervalSince(self.lastModelTouch) >= 10 * 60 {
+                // Keep the model hot only while capturing; idle Ollama unloads it after keepAlive.
+                if self.running && self.lastModelTouch != .distantPast && !self.generating && !self.summarizing && !self.periodicWarmup && self.models.contains(where: { $0.name == activeModel }) && Date().timeIntervalSince(self.lastModelTouch) >= 10 * 60 {
                     self.periodicWarmup = true
                     let contextTokens = self.settings.contextTokens
                     Task { [weak self, ollama = self.ollama] in
@@ -336,6 +337,7 @@ import LocalCopilotCore
             await pipeline.setContextVocabulary(project.speechTerms)
             activeCaptureSettings = snapshot
             running = true; routeSignature = MicrophoneManager.routeSignature()
+            project.startWatching()
             captureBegan = Date()
             droppedAudioFrames = 0
             ensureJournalContext()
@@ -356,6 +358,7 @@ import LocalCopilotCore
         guard !starting, !stopping else { return }
         stopping = true; defer { stopping = false }
         running = false; mySpeaking = false
+        project.stopWatching()
         if let captureBegan { activeSeconds += Date().timeIntervalSince(captureBegan); self.captureBegan = nil }
         if !finalize { audioTask?.cancel(); await pipeline.cancel() }
         await capture.stop()

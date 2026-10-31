@@ -8,13 +8,15 @@ struct SessionContextView: View {
     init(model: ConversationManager) { self.model = model; screen = model.screen }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Контекст розмови й показаний код").font(.title2.bold())
+            Text("Контекст і код").font(.largeTitle.weight(.semibold))
             TextField("Тема, мова, умови задачі — наприклад React, співбесіда, нарада…", text: $model.sessionTopic).textFieldStyle(.roundedBorder)
-            IDEContextView(editor: model.editor)
-            ProjectContextView(project: model.project)
+            VStack(alignment: .leading, spacing: 10) {
+                CardHeader("Папка проєкту", symbol: "folder") { IDEContextView(editor: model.editor) }
+                ProjectContextView(project: model.project)
+            }.card()
             HSplitView {
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack { Toggle("Знімок екрана / OCR", isOn: $screen.enabled); Spacer(); Button("Очистити") { screen.clear() } }
+                    CardHeader("Показаний код", symbol: "text.viewfinder") { Toggle("Знімок / OCR", isOn: $screen.enabled).toggleStyle(.switch).controlSize(.mini); Button("Очистити") { screen.clear() }.controlSize(.small) }
                     HStack {
                         Picker("Вікно", selection: $screen.selectedWindow) {
                             Text("Виберіть вікно з кодом…").tag(UInt32(0))
@@ -34,17 +36,17 @@ struct SessionContextView: View {
                     if let updated = screen.updated { Text("Знімок: " + updated.formatted(date: .omitted, time: .standard)).font(.caption).foregroundStyle(.secondary) }
                     if let preview = screen.preview { Image(nsImage: preview).resizable().scaledToFit().frame(maxHeight: 140).accessibilityLabel("Попередній перегляд захопленого коду") }
                     Text("Код / OCR — можна вставити текст і виправити символи").font(.caption)
-                    TextEditor(text: $screen.codeText).font(.system(.body, design: .monospaced)).frame(minHeight: 150).border(.quaternary)
-                    Text("Папка лабораторної читається незалежно від знімка екрана. Знімки залишаються в RAM; OCR може помилятися в символах і відступах.").font(.caption).foregroundStyle(.secondary)
-                }.frame(minWidth: 390)
+                    TextEditor(text: $screen.codeText).font(.system(.body, design: .monospaced)).frame(minHeight: 150).scrollContentBackground(.hidden).padding(6).background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+                    Text("Папка проєкту читається незалежно від знімка екрана. Знімки залишаються в RAM; OCR може помилятися в символах і відступах.").font(.caption).foregroundStyle(.secondary)
+                }.card().frame(minWidth: 390)
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Пам’ять поточної сесії").font(.headline)
+                    CardHeader("Пам’ять сесії", symbol: "brain")
                     Text(model.summarizing ? "Стискаю попередні репліки…" : "Старі репліки стискаються у фоні; останні залишаються дослівно.").font(.caption).foregroundStyle(.secondary)
-                    TextEditor(text: $model.memorySummary).frame(minHeight: 100, maxHeight: 180).border(.quaternary)
-                    Text("Репліки з позначеним джерелом").font(.headline)
-                    ScrollView { Text(model.sessionTranscript.isEmpty ? "Контекст з’явиться після завершених реплік. Нову сесію починає кнопка New session." : model.sessionTranscript).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled) }.frame(minHeight: 180)
+                    TextEditor(text: $model.memorySummary).frame(minHeight: 100, maxHeight: 180).scrollContentBackground(.hidden).padding(6).background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+                    CardHeader("Репліки", symbol: "text.quote")
+                    ScrollView { Text(model.sessionTranscript.isEmpty ? "Контекст з’явиться після завершених реплік. Нову сесію починає кнопка «Нова сесія»." : model.sessionTranscript).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled) }.frame(minHeight: 180)
                     Text(model.settings.saveHistory ? "Завершені репліки зберігаються локально в повному журналі. «Відновити останній» повертає текст і питання після перезапуску. Код перечитується з підключеної папки." : "Save history вимкнено: повний текст поточної сесії доступний для експорту до закриття застосунку.").font(.caption).foregroundStyle(.secondary)
-                }.frame(minWidth: 250)
+                }.card().frame(minWidth: 250)
             }
         }.padding(20).task { if PermissionsManager.screenStatus == "Allowed" { await screen.refreshWindows() } }
     }
@@ -67,7 +69,7 @@ struct ProjectContextView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Button(project.rootPath.isEmpty ? "Вибрати папку лабораторної…" : "Змінити папку лабораторної…") { project.chooseFolder() }
+                Button(project.rootPath.isEmpty ? "Вибрати папку…" : "Змінити папку…") { project.chooseFolder() }
                 Button("Оновити файли") { Task { await project.refresh() } }.disabled(project.busy || project.rootPath.isEmpty)
                 if !project.rootPath.isEmpty { Button("Від’єднати") { project.connect("") } }
                 if project.busy { ProgressView().controlSize(.small) }
@@ -83,7 +85,7 @@ struct ProjectContextView: View {
                 Text("Questionio шукає потрібний код у всій папці й передає моделі релевантні рядки. Збережіть зміни в IDE, щоб оновився індекс.").font(.caption).foregroundStyle(.secondary)
                 if !project.matches.isEmpty { Text("Знайдено: " + project.matches.joined(separator: ", ")).font(.caption).textSelection(.enabled) }
             }
-        }.padding(8).background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+        }
     }
 }
 
@@ -91,8 +93,8 @@ struct IDEContextView: View {
     @ObservedObject var editor: IDEContextService
     var body: some View {
         HStack {
-            Button(editor.enabled ? "Вимкнути читання WebStorm" : "Точне читання WebStorm…") { if editor.enabled { editor.disable() } else { editor.enable() } }
-            Text(editor.status).font(.caption).textSelection(.enabled)
+            Text(editor.status).font(.caption).foregroundStyle(.secondary).lineLimit(1).help(editor.status)
+            Button(editor.enabled ? "Вимкнути WebStorm" : "Читати WebStorm…") { if editor.enabled { editor.disable() } else { editor.enable() } }.controlSize(.small)
         }
     }
 }

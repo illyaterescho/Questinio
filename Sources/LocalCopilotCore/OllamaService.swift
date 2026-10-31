@@ -47,7 +47,7 @@ public enum ContextBuilder {
     }
 }
 public actor OllamaService {
-    private static let keepAlive = "2h"
+    private static let keepAlive = "15m"
     private var cachedCapabilities: [String: [String]] = [:]
     private let session: URLSession
     private let base = URL(string: "http://127.0.0.1:11434")!
