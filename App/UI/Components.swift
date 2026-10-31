@@ -2,12 +2,21 @@ import SwiftUI
 
 // Shared visual language: Liquid Glass (macOS 26+) over a soft ambient backdrop,
 // with a material fallback on older systems.
+/// One spacing/size grid for the whole app.
+enum UI {
+    static let page: CGFloat = 20      // window content inset
+    static let gap: CGFloat = 16       // between cards and rows
+    static let inner: CGFloat = 12     // inside cards
+    static let control: CGFloat = 34   // every control in a bar
+    static let bar: CGFloat = 46       // command bar / composer height
+    static let radius: CGFloat = 22    // card corners
+}
 extension View {
     @ViewBuilder func glass<S: Shape>(_ shape: S, tint: Color? = nil, interactive: Bool = false) -> some View {
         if #available(macOS 26, *) { glassEffect(Glass.regular.tint(tint).interactive(interactive), in: shape) }
         else { background(.regularMaterial, in: shape).overlay(shape.stroke(.primary.opacity(0.08))) }
     }
-    func card(padding: CGFloat = 16) -> some View { self.padding(padding).glass(RoundedRectangle(cornerRadius: 22, style: .continuous)) }
+    func card(padding: CGFloat = 16) -> some View { self.padding(padding).glass(RoundedRectangle(cornerRadius: UI.radius, style: .continuous)) }
     @ViewBuilder func glassButton(prominent: Bool = false) -> some View {
         if #available(macOS 26, *) { if prominent { buttonStyle(.glassProminent) } else { buttonStyle(.glass) } }
         else { if prominent { buttonStyle(.borderedProminent) } else { buttonStyle(.bordered) } }
@@ -49,7 +58,7 @@ struct CardHeader<Trailing: View>: View {
             Text(title).font(.headline)
             Spacer(minLength: 8)
             trailing
-        }
+        }.frame(height: 28)
     }
 }
 struct EmptyState: View {
@@ -74,21 +83,53 @@ enum StatusTone {
         return .busy
     }
 }
-struct StatusPill: View {
-    let title: String
-    let value: String
-    var symbol = "circle.fill"
+/// Small borderless icon with a 28 pt hit target and hover highlight.
+struct IconButton: View {
+    let symbol: String
+    let help: String
+    let action: () -> Void
+    @State private var hover = false
     var body: some View {
-        let tone = StatusTone.of(value)
-        HStack(spacing: 6) {
-            Circle().fill(tone.color).frame(width: 7, height: 7)
-                .shadow(color: tone.color.opacity(0.6), radius: tone == .ok ? 3 : 0)
-            Image(systemName: symbol).foregroundStyle(.secondary)
-            Text(title).fontWeight(.medium)
-            Text(value).foregroundStyle(.secondary).lineLimit(1)
-        }
-        .font(.caption).padding(.horizontal, 11).padding(.vertical, 7)
-        .glass(Capsule()).help(title + ": " + value)
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 13, weight: .medium)).frame(width: 28, height: 28)
+                .background(.primary.opacity(hover ? 0.08 : 0), in: Circle()).contentShape(Circle())
+        }.buttonStyle(.plain).foregroundStyle(.secondary).onHover { hover = $0 }.help(help)
+    }
+}
+/// Primary action: accent capsule with the same height as bar controls.
+struct AccentButton: View {
+    let title: String
+    var shortcut: String?
+    var symbol: String?
+    let action: () -> Void
+    @Environment(\.isEnabled) private var enabled
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if let symbol { Image(systemName: symbol) }
+                Text(title)
+                if let shortcut { Text(shortcut).font(.system(size: 11, weight: .medium)).opacity(0.75) }
+            }.font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+            .padding(.horizontal, 14).frame(height: UI.control)
+            .background(Color.accentColor.opacity(enabled ? 1 : 0.45), in: Capsule()).contentShape(Capsule())
+        }.buttonStyle(.plain)
+    }
+}
+/// On/off control with the same metrics as bar chips; filled with the accent colour when on.
+struct BarToggle: View {
+    let title: String
+    let symbol: String
+    @Binding var isOn: Bool
+    let help: String
+    @State private var hover = false
+    var body: some View {
+        Button { isOn.toggle() } label: {
+            Label(title, systemImage: symbol).font(.system(size: 13, weight: .semibold))
+                .padding(.horizontal, 12).frame(height: UI.control)
+                .foregroundStyle(isOn ? Color.white : Color.primary)
+                .background(isOn ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.primary.opacity(hover ? 0.07 : 0)), in: Capsule())
+                .contentShape(Capsule())
+        }.buttonStyle(.plain).onHover { hover = $0 }.help(help).animation(.snappy(duration: 0.18), value: isOn)
     }
 }
 struct AudioMeter: View {
@@ -137,14 +178,13 @@ struct AnswerCard: View {
     @ObservedObject var model: ConversationManager
     var compact = false
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: UI.inner) {
             CardHeader("Відповідь", symbol: "sparkles") {
                 if model.generating {
                     ProgressView().controlSize(.small)
-                    Button("Стоп", action: model.cancelGeneration).controlSize(.small).glassButton()
+                    IconButton(symbol: "stop.circle", help: "Зупинити генерацію", action: model.cancelGeneration)
                 }
-                Button { model.editLatestQuestion() } label: { Image(systemName: "pencil") }
-                    .buttonStyle(.borderless).help("Виправити розпізнане питання")
+                IconButton(symbol: "pencil", help: "Виправити розпізнане питання") { model.editLatestQuestion() }
                     .popover(isPresented: Binding(get: { model.questionEditing }, set: { if !$0 { model.cancelQuestionEdit() } })) {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("Уточніть питання перед відповіддю").font(.headline)
@@ -154,12 +194,11 @@ struct AnswerCard: View {
                             HStack { Button("Скасувати") { model.cancelQuestionEdit() }.glassButton(); Spacer(); Button("Відповісти з виправленням") { model.retryEditedQuestion() }.glassButton(prominent: true) }
                         }.padding(16)
                     }
-                Button { model.copyAnswer() } label: { Image(systemName: "doc.on.doc") }
-                    .buttonStyle(.borderless).help("Копіювати відповідь").disabled(model.answer.isEmpty)
+                IconButton(symbol: "doc.on.doc", help: "Копіювати відповідь") { model.copyAnswer() }.disabled(model.answer.isEmpty)
             }
             if !model.question.isEmpty {
                 Text(model.question).font(.callout.weight(.medium)).lineLimit(compact ? 3 : 5).textSelection(.enabled)
-                    .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(UI.inner).frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
             if model.answer.isEmpty && !model.generating {

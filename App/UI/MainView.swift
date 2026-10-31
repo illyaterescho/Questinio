@@ -116,44 +116,45 @@ struct LiveView: View {
     private var engineName: String { model.settings.speechEngine == "parakeet" ? "Parakeet v3" : "Whisper" }
     private var activeModel: String { model.settings.fastAnswers && model.models.contains(where: { $0.name == model.settings.fastModel }) ? model.settings.fastModel : model.settings.model }
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: UI.gap) {
             controlBar
             if !model.error.isEmpty {
-                HStack(alignment: .top, spacing: 10) {
+                HStack(alignment: .center, spacing: 10) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                    Text(model.error).font(.callout).textSelection(.enabled)
-                    Spacer()
-                    Button { model.error = "" } label: { Image(systemName: "xmark") }.buttonStyle(.borderless)
-                }.foregroundStyle(.orange).padding(14).glass(RoundedRectangle(cornerRadius: 18, style: .continuous), tint: .orange.opacity(0.25))
+                    Text(model.error).font(.callout).lineLimit(3).textSelection(.enabled)
+                    Spacer(minLength: 8)
+                    IconButton(symbol: "xmark", help: "Закрити") { model.error = "" }
+                }.foregroundStyle(.orange).padding(.leading, 16).padding(.trailing, 8).padding(.vertical, 8)
+                .glass(RoundedRectangle(cornerRadius: UI.radius, style: .continuous), tint: .orange.opacity(0.2))
             }
-            HStack(alignment: .top, spacing: 16) {
-                VStack(spacing: 14) {
-                    VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: UI.gap) {
+                VStack(spacing: UI.gap) {
+                    VStack(alignment: .leading, spacing: UI.inner) {
                         CardHeader("Питання", symbol: "questionmark.bubble") {
-                            Text("\(model.questionInbox.entries.count)").font(.caption.weight(.semibold)).monospacedDigit()
-                                .padding(.horizontal, 9).padding(.vertical, 3).background(.primary.opacity(0.07), in: Capsule())
+                            Text("\(model.questionInbox.entries.count)").font(.caption.weight(.semibold)).monospacedDigit().foregroundStyle(.secondary)
+                                .frame(minWidth: 24).frame(height: 22).padding(.horizontal, 4).background(.primary.opacity(0.07), in: Capsule())
                         }
                         QuestionInboxView(model: model)
-                    }.card().frame(minHeight: 200, maxHeight: .infinity)
+                    }.card().frame(maxHeight: .infinity)
                     transcript
                 }.frame(width: 360)
                 AnswerCard(model: model).frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             bottomBar
-        }.padding(20)
+        }.padding(UI.page)
     }
-    // Cluely-style command bar: record, source, engine, model, code, auto — one glass capsule.
+    // Cluely-style command bar: one compact glass capsule centred above the content.
     private var controlBar: some View {
-        HStack(spacing: 4) {
-            RecordButton(model: model, size: 38)
+        HStack(spacing: 2) {
+            RecordButton(model: model, size: UI.control)
             VStack(alignment: .leading, spacing: 0) {
-                Text(model.running ? clock(model.sessionSeconds) : "Запис").font(.system(size: 14, weight: .semibold)).monospacedDigit()
+                Text(model.running ? clock(model.sessionSeconds) : "Запис").font(.system(size: 13, weight: .semibold)).monospacedDigit()
                 Text(model.stopping ? "Завершую…" : model.starting ? "Запускаю…" : model.running ? "Слухаю" : "⌃⌥⌘R").font(.system(size: 10)).foregroundStyle(.secondary)
-            }.frame(width: 64, alignment: .leading).padding(.leading, 6)
-            Divider().frame(height: 22).padding(.horizontal, 4)
+            }.frame(width: 62, alignment: .leading).padding(.leading, 8)
+            barDivider
             BarChip(symbol: model.settings.effectiveAudioMode == .microphone ? "mic" : "speaker.wave.2",
                     value: model.running ? model.captureSourceName : model.configuredSourceName,
-                    help: "Джерело звуку · " + model.settings.effectiveAudioMode.label, maxWidth: 170,
+                    help: "Джерело звуку · " + model.settings.effectiveAudioMode.label, maxWidth: 160,
                     accessory: AnyView(HStack(spacing: 2) {
                         if model.settings.effectiveAudioMode != .microphone { MiniMeter(level: model.systemLevel) }
                         if model.settings.effectiveAudioMode != .system { MiniMeter(level: model.micLevel) }
@@ -162,23 +163,23 @@ struct LiveView: View {
             BarChip(symbol: "cpu", value: activeModel, help: "Модель AI · " + model.ollamaStatus, tone: StatusTone.of(model.ollamaStatus), maxWidth: 130) { ModelPanel(model: model).frame(width: 340) }
             BarChip(symbol: model.project.rootPath.isEmpty ? "folder.badge.plus" : "folder", value: model.project.rootPath.isEmpty ? "Код" : URL(fileURLWithPath: model.project.rootPath).lastPathComponent,
                     help: "Папка з кодом", maxWidth: 120) { ProjectPanel(project: model.project).frame(width: 340) }
-            Spacer(minLength: 8)
+            barDivider
             if !warnings.isEmpty {
-                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).frame(width: 30, height: 30).help(warnings.joined(separator: "\n"))
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).frame(width: UI.control, height: UI.control).help(warnings.joined(separator: "\n"))
             }
-            Toggle(isOn: $model.settings.automatic) { Label("Авто", systemImage: "bolt.fill").font(.system(size: 13, weight: .medium)) }
-                .toggleStyle(.button).glassButton(prominent: model.settings.automatic).help("Автоматично відповідати на завершені питання")
-        }.padding(6).glass(Capsule())
+            BarToggle(title: "Авто", symbol: "bolt.fill", isOn: $model.settings.automatic, help: "Автоматично відповідати на завершені питання")
+        }.padding(6).frame(height: UI.bar).glass(Capsule())
+        .frame(maxWidth: .infinity)
     }
+    private var barDivider: some View { Divider().frame(height: 20).padding(.horizontal, 6) }
     private var transcript: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: UI.inner) {
             CardHeader("Транскрипт", symbol: "text.quote") {
                 if model.settings.effectiveAudioMode == .both && showTranscript {
                     Picker("", selection: $transcriptSource) { Text("Співрозмовник").tag(AudioSource.system); Text("Я").tag(AudioSource.microphone) }
-                        .pickerStyle(.segmented).labelsHidden().frame(width: 190)
+                        .pickerStyle(.segmented).labelsHidden().controlSize(.small).frame(width: 180)
                 }
-                Button { withAnimation(.snappy) { showTranscript.toggle() } } label: { Image(systemName: "chevron.down").rotationEffect(.degrees(showTranscript ? 0 : -90)) }
-                    .buttonStyle(.borderless).help(showTranscript ? "Згорнути" : "Розгорнути")
+                IconButton(symbol: showTranscript ? "chevron.down" : "chevron.right", help: showTranscript ? "Згорнути" : "Розгорнути") { withAnimation(.snappy) { showTranscript.toggle() } }
             }
             if showTranscript {
                 let source = model.settings.effectiveAudioMode == .microphone ? .microphone : (model.settings.effectiveAudioMode == .system ? .system : transcriptSource)
@@ -189,22 +190,21 @@ struct LiveView: View {
             }
         }.card().frame(height: showTranscript ? 230 : nil)
     }
+    // One composer capsule: mic pause · question · Answer.
     private var bottomBar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             if model.settings.effectiveAudioMode != .system {
-                Button { model.toggleMySpeaking() } label: { Image(systemName: model.mySpeaking ? "mic.slash.fill" : "mic.fill").frame(width: 20, height: 20) }
-                    .glassButton(prominent: model.mySpeaking).buttonBorderShape(.circle).controlSize(.large).disabled(!model.running)
-                    .help(model.mySpeaking ? "Слухати мікрофон далі" : "Я говорю · пауза мікрофона (⌃⌥⌘M)")
+                IconButton(symbol: model.mySpeaking ? "mic.slash.fill" : "mic.fill", help: model.mySpeaking ? "Слухати мікрофон далі" : "Я говорю · пауза мікрофона (⌃⌥⌘M)") { model.toggleMySpeaking() }
+                    .disabled(!model.running)
+            } else {
+                Image(systemName: "sparkles").foregroundStyle(.tint).frame(width: 28, height: 28)
             }
-            HStack(spacing: 10) {
-                Image(systemName: "sparkles").foregroundStyle(.tint)
-                TextField("Запитайте або натисніть «Відповісти» для останньої фрази", text: $model.manualQuestion, axis: .vertical)
-                    .textFieldStyle(.plain).font(.system(size: 14)).lineLimit(1...4).onSubmit { model.generateManual() }
-                Button { model.generateManual() } label: {
-                    HStack(spacing: 6) { Text("Відповісти").font(.system(size: 13, weight: .semibold)); Text("⌘↩").font(.system(size: 11, weight: .medium)).opacity(0.7) }
-                }.glassButton(prominent: true).buttonBorderShape(.capsule).keyboardShortcut(.return, modifiers: .command).help("Відповісти на останню фразу або введене питання (глобально ⌃⌥⌘G)")
-            }.padding(.leading, 16).padding(.trailing, 6).padding(.vertical, 6).glass(Capsule(), interactive: true)
-        }
+            TextField("Запитайте або натисніть «Відповісти» для останньої фрази", text: $model.manualQuestion, axis: .vertical)
+                .textFieldStyle(.plain).font(.system(size: 14)).lineLimit(1...4).onSubmit { model.generateManual() }
+            AccentButton(title: "Відповісти", shortcut: "⌘↩") { model.generateManual() }
+                .keyboardShortcut(.return, modifiers: .command).help("Відповісти на останню фразу або введене питання (глобально ⌃⌥⌘G)")
+        }.padding(.leading, 10).padding(.trailing, 6).padding(.vertical, 6).frame(minHeight: UI.bar)
+        .glass(Capsule(), interactive: true)
     }
 }
 
@@ -281,30 +281,29 @@ struct FloatingView: View {
         return model.running ? "Слухаю…" : "Натисніть запис або ⌃⌥⌘R"
     }
     var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 8) {
-                RecordButton(model: model, size: 30)
-                if model.running { Text(clock(model.sessionSeconds)).font(.system(size: 12, weight: .semibold)).monospacedDigit().foregroundStyle(.secondary) }
+        VStack(spacing: UI.inner) {
+            HStack(spacing: 6) {
+                RecordButton(model: model, size: UI.control)
+                if model.running { Text(clock(model.sessionSeconds)).font(.system(size: 12, weight: .semibold)).monospacedDigit().foregroundStyle(.secondary).padding(.leading, 2) }
                 Text(latest).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.head).frame(maxWidth: .infinity, alignment: .leading)
-                    .foregroundStyle(model.questionInbox.entries.isEmpty ? .secondary : .primary).help(latest)
+                    .foregroundStyle(model.questionInbox.entries.isEmpty ? .secondary : .primary).help(latest).padding(.leading, 4)
                 QuestionInboxView(model: model, compact: true).fixedSize()
-                Button { model.generateManual() } label: { HStack(spacing: 5) { Text("Відповісти").font(.system(size: 12, weight: .semibold)); Text("⌃⌥⌘G").font(.system(size: 10)).opacity(0.7) } }
-                    .glassButton(prominent: true).buttonBorderShape(.capsule).controlSize(.small).disabled(model.generating)
-                Button { showSource.toggle() } label: { Image(systemName: "slider.horizontal.3") }.buttonStyle(.borderless).help("Джерело звуку")
+                AccentButton(title: "Відповісти") { model.generateManual() }.disabled(model.generating).help("Відповісти на останнє питання (⌃⌥⌘G)")
+                IconButton(symbol: "slider.horizontal.3", help: "Джерело звуку") { showSource.toggle() }
                     .popover(isPresented: $showSource) { CaptureSourceView(model: model).frame(width: 420).padding(16) }
-                Toggle(isOn: $model.settings.alwaysOnTop) { Image(systemName: model.settings.alwaysOnTop ? "pin.fill" : "pin") }.toggleStyle(.button).buttonStyle(.borderless)
-                    .disabled(model.settings.privateWindow).help("Поверх інших вікон")
-            }.padding(.leading, 6).padding(.trailing, 12).padding(.vertical, 6).glass(Capsule())
+                IconButton(symbol: model.settings.alwaysOnTop ? "pin.fill" : "pin", help: "Поверх інших вікон") { model.settings.alwaysOnTop.toggle() }
+                    .disabled(model.settings.privateWindow)
+            }.padding(6).frame(height: UI.bar).glass(Capsule())
             if !model.answer.isEmpty || model.generating || !model.question.isEmpty {
                 AnswerCard(model: model, compact: true).transition(.opacity.combined(with: .move(edge: .top)))
             }
             HStack(spacing: 8) {
                 TextField("Запитати…", text: $model.manualQuestion).textFieldStyle(.plain).font(.system(size: 13)).onSubmit { model.generateManual() }
-                Button { model.generateManual() } label: { Image(systemName: "arrow.up").font(.system(size: 11, weight: .bold)).frame(width: 16, height: 16) }.glassButton(prominent: true).buttonBorderShape(.circle).controlSize(.small)
-            }.padding(.leading, 14).padding(.trailing, 5).padding(.vertical, 5).glass(Capsule(), interactive: true)
-            if !model.error.isEmpty { Label(model.error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange).lineLimit(2).help(model.error) }
+                IconButton(symbol: "arrow.up.circle.fill", help: "Відповісти") { model.generateManual() }
+            }.padding(.leading, 16).padding(.trailing, 6).frame(height: 40).glass(Capsule(), interactive: true)
+            if !model.error.isEmpty { Label(model.error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange).lineLimit(2).help(model.error).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8) }
             Spacer(minLength: 0)
-        }.padding(.horizontal, 10).padding(.top, 26).padding(.bottom, 10).frame(minWidth: 380, minHeight: 120)
+        }.padding(.horizontal, UI.inner).padding(.top, 28).padding(.bottom, UI.inner).frame(minWidth: 400, minHeight: 120)
         .animation(.snappy, value: model.answer.isEmpty && !model.generating)
         .ignoresSafeArea().appColorScheme(model.settings.appearance)
     }
@@ -318,29 +317,29 @@ struct HistoryView: View {
         search.isEmpty ? model.history : model.history.filter { $0.question.localizedCaseInsensitiveContains(search) || $0.answer.localizedCaseInsensitiveContains(search) }
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: UI.gap) {
             HStack {
                 Text("Історія").font(.largeTitle.weight(.semibold))
                 Spacer()
                 Button("Видалити все", role: .destructive) { confirmDelete = true }.glassButton().disabled(model.history.isEmpty)
             }
-            HStack { Image(systemName: "magnifyingglass").foregroundStyle(.secondary); TextField("Пошук у питаннях і відповідях", text: $search).textFieldStyle(.plain) }.padding(.horizontal, 14).padding(.vertical, 9).glass(Capsule(), interactive: true)
+            HStack { Image(systemName: "magnifyingglass").foregroundStyle(.secondary); TextField("Пошук у питаннях і відповідях", text: $search).textFieldStyle(.plain) }.padding(.horizontal, 16).frame(height: UI.control + 6).glass(Capsule(), interactive: true)
             if records.isEmpty {
                 EmptyState(symbol: "clock", title: model.history.isEmpty ? "Історія порожня" : "Нічого не знайдено", hint: "Завершені відповіді зберігаються тут, якщо збереження історії увімкнено.")
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 10) {
+                    LazyVStack(spacing: UI.inner) {
                         ForEach(records) { record in
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack { Text(record.date.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary); Spacer(); Button("Продовжити") { model.restore(record) }.controlSize(.small).glassButton() }
                                 Text(record.question).font(.headline).textSelection(.enabled)
                                 Text(record.answer).foregroundStyle(.secondary).lineLimit(6).textSelection(.enabled)
-                            }.frame(maxWidth: .infinity, alignment: .leading).card(padding: 14)
+                            }.frame(maxWidth: .infinity, alignment: .leading).card()
                         }
                     }
                 }
             }
-        }.padding(20)
+        }.padding(UI.page)
         .alert("Видалити всю локальну історію?", isPresented: $confirmDelete) { Button("Видалити", role: .destructive) { Task { await model.clearHistory() } }; Button("Скасувати", role: .cancel) {} } message: { Text("Збережені питання, відповіді та журнали діалогів буде остаточно видалено з цього Mac.") }
     }
 }

@@ -7,9 +7,9 @@ struct SessionContextView: View {
     @ObservedObject var screen: ScreenContextService
     init(model: ConversationManager) { self.model = model; screen = model.screen }
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: UI.gap) {
             Text("Контекст і код").font(.largeTitle.weight(.semibold))
-            TextField("Тема, мова, умови задачі — наприклад React, співбесіда, нарада…", text: $model.sessionTopic).textFieldStyle(.roundedBorder)
+            HStack { Image(systemName: "tag").foregroundStyle(.secondary); TextField("Тема, мова, умови задачі — наприклад React, співбесіда, нарада…", text: $model.sessionTopic).textFieldStyle(.plain) }.padding(.horizontal, 16).frame(height: UI.control + 6).glass(Capsule(), interactive: true)
             VStack(alignment: .leading, spacing: 10) {
                 CardHeader("Папка проєкту", symbol: "folder") { IDEContextView(editor: model.editor) }
                 ProjectContextView(project: model.project)
@@ -38,7 +38,7 @@ struct SessionContextView: View {
                     Text("Код / OCR — можна вставити текст і виправити символи").font(.caption)
                     TextEditor(text: $screen.codeText).font(.system(.body, design: .monospaced)).frame(minHeight: 150).scrollContentBackground(.hidden).padding(6).background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
                     Text("Папка проєкту читається незалежно від знімка екрана. Знімки залишаються в RAM; OCR може помилятися в символах і відступах.").font(.caption).foregroundStyle(.secondary)
-                }.card().frame(minWidth: 390)
+                }.card().frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 VStack(alignment: .leading, spacing: 10) {
                     CardHeader("Пам’ять сесії", symbol: "brain")
                     Text(model.summarizing ? "Стискаю попередні репліки…" : "Старі репліки стискаються у фоні; останні залишаються дослівно.").font(.caption).foregroundStyle(.secondary)
@@ -46,9 +46,9 @@ struct SessionContextView: View {
                     CardHeader("Репліки", symbol: "text.quote")
                     ScrollView { Text(model.sessionTranscript.isEmpty ? "Контекст з’явиться після завершених реплік. Нову сесію починає кнопка «Нова сесія»." : model.sessionTranscript).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled) }.frame(minHeight: 180)
                     Text(model.settings.saveHistory ? "Завершені репліки зберігаються локально в повному журналі. «Відновити останній» повертає текст і питання після перезапуску. Код перечитується з підключеної папки." : "Save history вимкнено: повний текст поточної сесії доступний для експорту до закриття застосунку.").font(.caption).foregroundStyle(.secondary)
-                }.card().frame(minWidth: 250)
+                }.card().frame(width: 340).frame(maxHeight: .infinity, alignment: .top)
             }
-        }.padding(20).task { if PermissionsManager.screenStatus == "Allowed" { await screen.refreshWindows() } }
+        }.padding(UI.page).task { if PermissionsManager.screenStatus == "Allowed" { await screen.refreshWindows() } }
     }
 }
 struct CompactCodeContext: View {

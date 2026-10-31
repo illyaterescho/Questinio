@@ -83,7 +83,7 @@ struct DiagnosticsView: View {
     @ObservedObject var diagnostics: DiagnosticsManager
     init(model: ConversationManager) { self.model = model; diagnostics = model.diagnostics }
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: UI.gap) {
             Text("Діагностика").font(.largeTitle.weight(.semibold))
             Text("Аудіотест слухає 5 секунд: говоріть у мікрофон або увімкніть звук у вибраній програмі. Аудіо не зберігається.").foregroundStyle(.secondary)
             HStack { Button("Тест мікрофона") { Task { await model.testAudio(.microphone) } }; Button("Тест системного звуку") { Task { await model.testAudio(.system) } }; Button("Тест Whisper · аудіофайл") { Task { await model.testWhisperFile() } }; Button("Тест Ollama") { Task { await diagnostics.testOllama(model.ollama, settings: model.settings) } } }.disabled(diagnostics.testing || model.running || model.starting || model.modelBusy || model.generating)
@@ -91,6 +91,6 @@ struct DiagnosticsView: View {
             HStack(spacing: 20) { AudioMeter(label: "Мікрофон", level: model.micLevel, status: model.micStatus, symbol: "mic"); AudioMeter(label: "Звук програм", level: model.systemLevel, status: model.systemStatus, symbol: "speaker.wave.2") }.card(padding: 14)
             ScrollView { Text(diagnostics.lines.joined(separator: "\n")).font(.system(.caption, design: .monospaced)).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled) }.card(padding: 12)
             Text("Журнал зберігається лише в пам’яті. Мережа — тільки localhost і явні завантаження моделей.").font(.caption).foregroundStyle(.secondary)
-        }.padding(22)
+        }.padding(UI.page)
     }
 }
