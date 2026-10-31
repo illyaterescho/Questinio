@@ -311,6 +311,25 @@ final class CoreTests: XCTestCase {
         try store.save(settings); XCTAssertEqual(try store.load(), settings)
         try Data("broken".utf8).write(to: store.url); XCTAssertThrowsError(try store.load())
     }
+    func testSavedSettingsWithoutEngineKeepWhisperAndParakeetPersists() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let store = SettingsManager(url: directory.appendingPathComponent("settings.json"))
+        try JSONSerialization.data(withJSONObject: ["schemaVersion": 7, "language": "uk"]).write(to: store.url)
+        XCTAssertEqual(try store.load().speechEngine, "whisper")
+        var settings = try store.load(); settings.speechEngine = "parakeet"; try store.save(settings)
+        XCTAssertEqual(try store.load().speechEngine, "parakeet")
+    }
+    func testEngineRouterFailsCleanlyWhenSelectedEngineIsNotLoaded() async {
+        let router = SpeechEngineRouter(whisper: SpeechRecognitionService(), parakeet: ParakeetRecognitionService())
+        await router.select(parakeet: true)
+        do { _ = try await router.transcribe([0], language: "uk", vocabulary: ""); XCTFail("Expected not-loaded error") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("Parakeet is not loaded")) }
+        await router.select(parakeet: false)
+        do { _ = try await router.transcribe([0], language: "uk", vocabulary: ""); XCTFail("Expected not-loaded error") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("Whisper is not loaded")) }
+    }
     func testLegacySettingsMigrateWithoutLosingAudioOrModel() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

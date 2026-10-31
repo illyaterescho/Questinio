@@ -15,7 +15,11 @@ No cloud APIs, no accounts, no subscription.
 - **Two audio channels**: app/system audio (Core Audio Tap or ScreenCaptureKit)
   and microphone, transcribed separately, so you always know who spoke.
 - **On-device speech recognition**: WhisperKit (Core ML), small / base /
-  large-v3-turbo. Network fallback is disabled during recognition.
+  large-v3-turbo, or the optional Parakeet TDT v3 (FluidAudio, Neural Engine):
+  10+× faster and lighter, less accurate on Ukrainian IT terms. Network fallback
+  is disabled during recognition.
+- **Light when idle**: the LLM stays loaded only while capturing and unloads
+  15 min after Stop; the project folder is rescanned only during capture.
 - **Question inbox**: detects finished questions after a pause, keeps the
   conversation context at the moment each question was asked, tracks
   interrupted or rephrased questions.
@@ -88,6 +92,8 @@ History → Delete all removes answers and session journals.
 swift run LocalCopilotProbe                       # list models, test one answer
 swift run LocalCopilotProbe --download --variant openai_whisper-small
 swift run LocalCopilotProbe --transcribe sample.wav
+swift run LocalCopilotProbe --download-parakeet
+swift run LocalCopilotProbe --transcribe a.wav b.wav --engine parakeet --language uk
 ```
 
 ## License

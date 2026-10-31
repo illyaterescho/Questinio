@@ -14,12 +14,23 @@ import LocalCopilotCore
                 }
                 print("MODEL_PATH=\(folder.path)")
                 if !args.contains("--download-only") { try await speech.load(folder: folder.path); print("Whisper loaded") }
+            } else if args.contains("--download-parakeet") {
+                try await ParakeetRecognitionService().download(); print("PARAKEET_PATH=\(ParakeetRecognitionService.folder.path)")
+            } else if let index = args.firstIndex(of: "--transcribe"), args.count > index + 1, args.contains("parakeet") {
+                let settings = try SettingsManager().load(); let parakeet = ParakeetRecognitionService()
+                let loadStart = Date(); try await parakeet.load()
+                print("load_seconds=\(Date().timeIntervalSince(loadStart))")
+                let language = args.firstIndex(of: "--language").flatMap { args.count > $0 + 1 ? args[$0+1] : nil } ?? settings.language
+                for file in args[(index + 1)...].prefix(while: { !$0.hasPrefix("--") }) {
+                    let result = try await parakeet.transcribeFile(path: file, language: language)
+                    print("file=\(file)\ndecode_seconds=\(result.seconds)\ntranscript=\(result.text)")
+                }
             } else if let index = args.firstIndex(of: "--transcribe"), args.count > index + 1 {
                 let settings = try SettingsManager().load(); let speech = SpeechRecognitionService()
                 let folder = args.firstIndex(of: "--model-folder").flatMap { args.count > $0 + 1 ? args[$0+1] : nil } ?? settings.modelPath
                 let loadStart = Date(); try await speech.load(folder: folder)
                 print("load_seconds=\(Date().timeIntervalSince(loadStart))")
-                var files = [args[index+1]]
+                var files = Array(args[(index + 1)...].prefix(while: { !$0.hasPrefix("--") }))
                 if let also = args.firstIndex(of: "--also"), args.count > also + 1 { files.append(args[also+1]) }
                 for file in files {
                     let result = try await speech.transcribeFile(path: file, language: args.firstIndex(of: "--language").flatMap { args.count > $0 + 1 ? args[$0+1] : nil } ?? settings.language, vocabulary: args.contains("--vocabulary") ? settings.speechVocabulary : "")

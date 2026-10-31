@@ -15,7 +15,11 @@ macOS 14+). Розшифровує дзвінок або мікрофон пря
 - **Два аудіоканали**: звук застосунку/системи (Core Audio Tap або
   ScreenCaptureKit) і мікрофон розпізнаються окремо, тож завжди видно, хто говорив.
 - **Розпізнавання мовлення на пристрої**: WhisperKit (Core ML), моделі small /
-  base / large-v3-turbo. Під час розпізнавання мережевий fallback вимкнено.
+  base / large-v3-turbo, або опційний Parakeet TDT v3 (FluidAudio, Neural Engine):
+  у 10+ разів швидший і легший, але менш точний з українськими IT-термінами.
+  Під час розпізнавання мережевий fallback вимкнено.
+- **Легкий у простої**: мовна модель тримається в пам’яті лише під час запису й
+  вивантажується через 15 хв після зупинки; папка проєкту сканується лише під час запису.
 - **Список питань**: питання фіксується після паузи разом із контекстом розмови
   на той момент; перервані й переформульовані питання відстежуються.
 - **Локальні відповіді**: Ollama (`/api/chat`, потоково), підтримка моделей із thinking.
@@ -87,6 +91,8 @@ System Settings → Privacy & Security:
 swift run LocalCopilotProbe                       # список моделей, тестова відповідь
 swift run LocalCopilotProbe --download --variant openai_whisper-small
 swift run LocalCopilotProbe --transcribe sample.wav
+swift run LocalCopilotProbe --download-parakeet
+swift run LocalCopilotProbe --transcribe a.wav b.wav --engine parakeet --language uk
 ```
 
 ## Ліцензія

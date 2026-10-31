@@ -25,6 +25,7 @@ public actor SpeechRecognitionService {
         }
         return folder
     }
+    public func unload() async { await whisper?.unloadModels(); whisper = nil; loadedFolder = "" }
     public func load(folder: String) async throws {
         if whisper != nil && folder == loadedFolder { return }
         guard !busy else { throw CopilotError.message("Whisper is busy") }; busy = true; defer { busy = false }

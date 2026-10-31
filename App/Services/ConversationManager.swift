@@ -7,6 +7,7 @@ import LocalCopilotCore
             let modelChanged = settings.model != oldValue.model || settings.fastModel != oldValue.fastModel || settings.fastAnswers != oldValue.fastAnswers || settings.contextTokens != oldValue.contextTokens
             persistSettings()
             if modelChanged { Task { await refreshModels() } }
+            if settings.speechEngine != oldValue.speechEngine { Task { await loadModel() } }
         }
     }
     @Published var models: [OllamaModel] = []
@@ -95,6 +96,8 @@ import LocalCopilotCore
     let diagnostics = DiagnosticsManager()
     let capture = AudioCaptureManager()
     let speech: SpeechRecognitionService
+    let parakeet = ParakeetRecognitionService()
+    private let engine: SpeechEngineRouter
     let ollama: OllamaService
     private let settingsStore: SettingsManager
     private let storage: StorageManager?
@@ -123,7 +126,8 @@ import LocalCopilotCore
     var windowPreferencesChanged: (() -> Void)?
     var togglePanel: (() -> Void)?
     init(speech: SpeechRecognitionService = SpeechRecognitionService(), ollama: OllamaService = OllamaService(), settingsStore: SettingsManager = SettingsManager()) {
-        self.speech = speech; self.ollama = ollama; self.settingsStore = settingsStore; pipeline = SpeechPipeline(speech: speech)
+        self.speech = speech; self.ollama = ollama; self.settingsStore = settingsStore; let engine = SpeechEngineRouter(whisper: speech, parakeet: parakeet); self.engine = engine
+        pipeline = SpeechPipeline(transcribe: { samples, language, vocabulary in try await engine.transcribe(samples, language: language, vocabulary: vocabulary) })
         var initialError = ""
         do { settings = try settingsStore.load() } catch { settings = CopilotSettings(); initialError = "Cannot read settings: \(error.localizedDescription)" }
         do { storage = try StorageManager() } catch { storage = nil; initialError += " History unavailable: \(error.localizedDescription)" }
@@ -230,6 +234,7 @@ import LocalCopilotCore
             }
         }
     }
+    private var usesParakeet: Bool { settings.speechEngine == "parakeet" }
     private var whisperModelLabel: String {
         if settings.modelPath.contains("large-v3") { return "Large v3 Turbo" }
         if settings.modelPath.contains("whisper-small") { return "small" }
@@ -306,6 +311,13 @@ import LocalCopilotCore
     func downloadModel() async {
         guard !running, !starting, !stopping, !modelBusy else { return }
         modelBusy = true; whisperStatus = "Downloading model + tokenizer…"; defer { modelBusy = false }
+        if usesParakeet {
+            do {
+                try await parakeet.download()
+                modelBusy = false; await loadModel(); diagnostics.log("Parakeet downloaded and loaded locally")
+            } catch { whisperStatus = "Failed"; self.error = error.localizedDescription; diagnostics.log(self.error) }
+            return
+        }
         do {
             let folder = try await speech.download(variant: settings.whisperVariant)
             settings.modelPath = folder.path
@@ -315,6 +327,16 @@ import LocalCopilotCore
     }
     func loadModel() async {
         guard !running, !starting, !modelBusy else { return }; modelBusy = true; defer { modelBusy = false }
+        // Only one recognizer stays in memory.
+        if usesParakeet {
+            await speech.unload()
+            guard ParakeetRecognitionService.installed else { whisperStatus = "Model not installed"; self.error = "Завантажте Parakeet один раз у Налаштуваннях → Розпізнавання."; return }
+            whisperStatus = "Loading…"
+            do { try await parakeet.load(); await engine.select(parakeet: true); whisperStatus = "Ready · Parakeet v3" }
+            catch { whisperStatus = "Failed · use Load local model"; self.error = error.localizedDescription }
+            return
+        }
+        await parakeet.unload(); await engine.select(parakeet: false)
         guard !settings.modelPath.isEmpty else { whisperStatus = "Model not installed"; self.error = "Download Whisper once in Speech Recognition settings."; return }
         for attempt in 0..<3 {
             whisperStatus = attempt == 0 ? "Loading…" : "Retrying local model…"
@@ -330,7 +352,8 @@ import LocalCopilotCore
         guard !running, !starting, !stopping, !modelBusy, !diagnostics.testing else { return }
         starting = true; defer { starting = false }; error = ""
         do {
-            if !(await speech.ready) { whisperStatus = "Loading…"; try await speech.load(folder: settings.modelPath); whisperStatus = "Ready · \(whisperModelLabel)" }
+            if usesParakeet { if !(await parakeet.ready) { whisperStatus = "Loading…"; try await parakeet.load(); await engine.select(parakeet: true); whisperStatus = "Ready · Parakeet v3" } }
+            else if !(await speech.ready) { whisperStatus = "Loading…"; try await speech.load(folder: settings.modelPath); whisperStatus = "Ready · \(whisperModelLabel)" }
             let snapshot = settings
             captureSourceName = configuredSourceName; captureMode = snapshot.audioMode
             let frames = try await capture.start(settings: snapshot)

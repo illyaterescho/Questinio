@@ -30,6 +30,13 @@ struct SettingsView: View {
                         }.disabled(model.running || model.starting || diagnostics.testing)
                         Section("Сигнал") { AudioMeter(label: "Мікрофон", level: model.micLevel, status: model.micStatus, symbol: "mic"); AudioMeter(label: "Звук програм", level: model.systemLevel, status: model.systemStatus, symbol: "speaker.wave.2") }
                     case "Speech Recognition":
+                        Section("Рушій розпізнавання") {
+                            Picker("Рушій", selection: $model.settings.speechEngine) { Text("Whisper · найточніший для української й IT-термінів").tag("whisper"); Text("Parakeet v3 · у 10+ разів швидший, легший").tag("parakeet") }.pickerStyle(.radioGroup)
+                            if model.settings.speechEngine == "parakeet" {
+                                HStack { Button(ParakeetRecognitionService.installed ? "Перезавантажити Parakeet" : "Завантажити Parakeet (~0.5 ГБ)") { Task { if ParakeetRecognitionService.installed { await model.loadModel() } else { await model.downloadModel() } } }; Text(model.whisperStatus).foregroundStyle(.secondary) }
+                                Text("Parakeet працює на Neural Engine і звільняє GPU для мовної моделі, але частіше плутає IT-терміни й може зісковзувати в російську. Для захисту коду чи співбесід краще Whisper.").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }.disabled(model.running || model.starting || model.modelBusy || diagnostics.testing)
                         Section("Whisper · офлайн") {
                             Text("Встановлена модель завантажується автоматично під час запуску.").font(.caption).foregroundStyle(.secondary)
                             Picker("Модель", selection: $model.settings.whisperVariant) { Text("Whisper Large v3 Turbo · найточніша").tag("openai_whisper-large-v3-v20240930_turbo"); Text("Whisper small · легша").tag("openai_whisper-small"); Text("Whisper base · найшвидша").tag("openai_whisper-base") }

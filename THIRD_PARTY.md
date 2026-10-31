@@ -43,3 +43,7 @@ OpenAI Whisper Large v3 Turbo: MIT license.
 Model/tokenizer: https://huggingface.co/openai/whisper-large-v3-turbo
 Core ML conversion by Argmax: https://huggingface.co/argmaxinc/whisperkit-coreml/tree/main/openai_whisper-large-v3-v20240930_turbo
 Model files are downloaded to local Application Support, not embedded in the app bundle.
+
+FluidAudio 0.17.7: Apache License 2.0. https://github.com/FluidInference/FluidAudio
+NVIDIA Parakeet TDT 0.6B v3: CC-BY-4.0. Core ML conversion: https://huggingface.co/FluidInference/parakeet-tdt-0.6b-v3-coreml
+Optional engine; model files are downloaded once to local Application Support, not embedded in the app bundle.

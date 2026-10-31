@@ -37,6 +37,7 @@ public struct CopilotSettings: Codable, Equatable, Sendable {
     public var contextCharacters = 12000
     public var language = "auto"
     public var whisperVariant = "openai_whisper-large-v3-v20240930_turbo"
+    public var speechEngine = "whisper"
     public var modelPath = ""
     public var silenceSeconds = 0.85
     public var chunkSeconds = 6.0
