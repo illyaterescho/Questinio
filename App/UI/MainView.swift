@@ -28,7 +28,7 @@ struct MainView: View {
                 else if selection == "History" { HistoryView(model: model) }
                 else if selection == "Diagnostics" { DiagnosticsView(model: model) }
                 else { LiveView(model: model) }
-            }.background(.background.secondary)
+            }.background(AmbientBackground())
         }.frame(minWidth: 900, minHeight: 620).appColorScheme(model.settings.appearance)
         .toolbar {
             ToolbarItemGroup {
@@ -53,10 +53,12 @@ struct RecordButton: View {
     var body: some View {
         Button { Task { if model.running { await model.stop() } else { await model.start() } } } label: {
             ZStack {
-                if model.running { Circle().stroke(.red.opacity(0.35), lineWidth: 3).scaleEffect(pulse ? 1.25 : 1).opacity(pulse ? 0 : 1) }
-                Circle().fill(model.running ? Color.red.gradient : Color.accentColor.gradient)
-                if model.starting || model.stopping { ProgressView().controlSize(.small).tint(.white) }
-                else { Image(systemName: model.running ? "stop.fill" : "mic.fill").font(.system(size: size * 0.38, weight: .semibold)).foregroundStyle(.white) }
+                if model.running { Circle().stroke(.red.opacity(0.35), lineWidth: 3).scaleEffect(pulse ? 1.3 : 1).opacity(pulse ? 0 : 1) }
+                Group {
+                    if model.starting || model.stopping { ProgressView().controlSize(.small).tint(.white) }
+                    else { Image(systemName: model.running ? "stop.fill" : "mic.fill").font(.system(size: size * 0.38, weight: .semibold)).foregroundStyle(.white) }
+                }.frame(width: size, height: size)
+                .glass(Circle(), tint: model.running ? .red : .accentColor, interactive: true)
             }.frame(width: size, height: size).contentShape(Circle())
         }.buttonStyle(.plain).disabled(model.starting || model.stopping || model.modelBusy)
         .help(model.running ? "Зупинити запис (⌃⌥⌘R)" : "Почати запис (⌃⌥⌘R)")
@@ -87,14 +89,14 @@ struct LiveView: View {
                     Text(model.error).font(.callout).textSelection(.enabled)
                     Spacer()
                     Button { model.error = "" } label: { Image(systemName: "xmark") }.buttonStyle(.borderless)
-                }.foregroundStyle(.orange).padding(12).background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }.foregroundStyle(.orange).padding(14).glass(RoundedRectangle(cornerRadius: 18, style: .continuous), tint: .orange.opacity(0.25))
             }
             HSplitView {
                 VStack(spacing: 14) {
                     VStack(alignment: .leading, spacing: 10) {
                         CardHeader("Питання", symbol: "questionmark.bubble") {
                             Text("\(model.questionInbox.entries.count)").font(.caption.weight(.semibold)).monospacedDigit()
-                                .padding(.horizontal, 8).padding(.vertical, 2).background(.quaternary, in: Capsule())
+                                .padding(.horizontal, 9).padding(.vertical, 3).glass(Capsule())
                         }
                         QuestionInboxView(model: model)
                     }.card().frame(minHeight: 180)
@@ -128,11 +130,15 @@ struct LiveView: View {
                 HStack(spacing: 8) {
                     if !warnings.isEmpty {
                         Label("\(warnings.count)", systemImage: "exclamationmark.triangle.fill").font(.caption.weight(.semibold)).foregroundStyle(.orange)
-                            .padding(.horizontal, 10).padding(.vertical, 6).background(.orange.opacity(0.12), in: Capsule())
+                            .padding(.horizontal, 11).padding(.vertical, 7).glass(Capsule(), tint: .orange.opacity(0.35))
                             .help(warnings.joined(separator: "\n"))
                     }
-                    StatusPill(title: "Голос", value: model.whisperStatus, symbol: "waveform")
-                    StatusPill(title: "AI", value: model.ollamaStatus, symbol: "cpu")
+                    GlassGroup(spacing: 8) {
+                        HStack(spacing: 8) {
+                            StatusPill(title: "Голос", value: model.whisperStatus, symbol: "waveform")
+                            StatusPill(title: "AI", value: model.ollamaStatus, symbol: "cpu")
+                        }
+                    }
                 }
                 HStack(spacing: 14) {
                     Toggle("Автовідповіді", isOn: $model.settings.automatic)
@@ -165,11 +171,10 @@ struct LiveView: View {
             Image(systemName: "text.cursor").foregroundStyle(.tertiary)
             TextField("Поставте питання або натисніть Enter для останньої фрази…", text: $model.manualQuestion, axis: .vertical)
                 .textFieldStyle(.plain).lineLimit(1...4).onSubmit { model.generateManual() }
-            Button { model.generateManual() } label: { Image(systemName: "arrow.up.circle.fill").font(.system(size: 24)) }
-                .buttonStyle(.plain).foregroundStyle(.tint).help("Відповісти (⌃⌥⌘G)").keyboardShortcut(.return, modifiers: .command)
-        }.padding(.horizontal, 14).padding(.vertical, 10)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.primary.opacity(0.08)))
+            Button { model.generateManual() } label: { Image(systemName: "arrow.up").font(.system(size: 14, weight: .bold)).frame(width: 22, height: 22) }
+                .glassButton(prominent: true).buttonBorderShape(.circle).help("Відповісти (⌃⌥⌘G)").keyboardShortcut(.return, modifiers: .command)
+        }.padding(.leading, 18).padding(.trailing, 8).padding(.vertical, 8)
+        .glass(Capsule(), interactive: true)
     }
 }
 
@@ -199,10 +204,11 @@ struct FloatingView: View {
             AnswerCard(model: model, compact: true)
             HStack(spacing: 8) {
                 TextField("Питання…", text: $model.manualQuestion).textFieldStyle(.plain).onSubmit { model.generateManual() }
-                Button { model.generateManual() } label: { Image(systemName: "arrow.up.circle.fill").font(.system(size: 20)) }.buttonStyle(.plain).foregroundStyle(.tint)
-            }.padding(.horizontal, 12).padding(.vertical, 8).background(.quaternary.opacity(0.5), in: Capsule())
+                Button { model.generateManual() } label: { Image(systemName: "arrow.up").font(.system(size: 12, weight: .bold)).frame(width: 18, height: 18) }.glassButton(prominent: true).buttonBorderShape(.circle)
+            }.padding(.leading, 14).padding(.trailing, 6).padding(.vertical, 6).glass(Capsule(), interactive: true)
             if !model.error.isEmpty { Label(model.error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange).lineLimit(3).help(model.error) }
-        }.padding(12).frame(minWidth: 340, minHeight: 260).background(.ultraThinMaterial).appColorScheme(model.settings.appearance)
+        }.padding(14).padding(.top, 14).frame(minWidth: 340, minHeight: 260)
+        .glass(RoundedRectangle(cornerRadius: 26, style: .continuous)).ignoresSafeArea().appColorScheme(model.settings.appearance)
     }
 }
 
@@ -218,9 +224,9 @@ struct HistoryView: View {
             HStack {
                 Text("Історія").font(.largeTitle.weight(.semibold))
                 Spacer()
-                Button("Видалити все", role: .destructive) { confirmDelete = true }.disabled(model.history.isEmpty)
+                Button("Видалити все", role: .destructive) { confirmDelete = true }.glassButton().disabled(model.history.isEmpty)
             }
-            TextField("Пошук у питаннях і відповідях", text: $search).textFieldStyle(.roundedBorder)
+            HStack { Image(systemName: "magnifyingglass").foregroundStyle(.secondary); TextField("Пошук у питаннях і відповідях", text: $search).textFieldStyle(.plain) }.padding(.horizontal, 14).padding(.vertical, 9).glass(Capsule(), interactive: true)
             if records.isEmpty {
                 EmptyState(symbol: "clock", title: model.history.isEmpty ? "Історія порожня" : "Нічого не знайдено", hint: "Завершені відповіді зберігаються тут, якщо збереження історії увімкнено.")
             } else {
@@ -228,7 +234,7 @@ struct HistoryView: View {
                     LazyVStack(spacing: 10) {
                         ForEach(records) { record in
                             VStack(alignment: .leading, spacing: 8) {
-                                HStack { Text(record.date.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary); Spacer(); Button("Продовжити") { model.restore(record) }.controlSize(.small) }
+                                HStack { Text(record.date.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary); Spacer(); Button("Продовжити") { model.restore(record) }.controlSize(.small).glassButton() }
                                 Text(record.question).font(.headline).textSelection(.enabled)
                                 Text(record.answer).foregroundStyle(.secondary).lineLimit(6).textSelection(.enabled)
                             }.frame(maxWidth: .infinity, alignment: .leading).card(padding: 14)
@@ -289,7 +295,7 @@ struct CaptureSourceView: View {
             HStack {
                 Text("Власні терміни — у Налаштуваннях → Розпізнавання").font(.caption2).foregroundStyle(.tertiary)
                 Spacer()
-                Button { model.settings.privateWindow.toggle() } label: { Label(model.settings.privateWindow ? "Ghost ON" : "Ghost OFF", systemImage: model.settings.privateWindow ? "eye.slash" : "eye") }.buttonStyle(.bordered).controlSize(.small)
+                Button { model.settings.privateWindow.toggle() } label: { Label(model.settings.privateWindow ? "Ghost ON" : "Ghost OFF", systemImage: model.settings.privateWindow ? "eye.slash" : "eye") }.glassButton().controlSize(.small)
             }
         }
     }
@@ -301,7 +307,7 @@ struct CompactProjectContext: View {
         Button { project.chooseFolder() } label: {
             Label(project.rootPath.isEmpty ? "Підключити папку з кодом" : URL(fileURLWithPath: project.rootPath).lastPathComponent + " · \(project.files.count) файлів", systemImage: project.rootPath.isEmpty ? "folder.badge.plus" : "folder.fill")
                 .font(.caption).lineLimit(1)
-        }.buttonStyle(.bordered).controlSize(.small).help(project.rootPath.isEmpty ? "Вибрати папку проєкту" : project.rootPath + " · натисніть, щоб змінити")
+        }.glassButton().controlSize(.small).help(project.rootPath.isEmpty ? "Вибрати папку проєкту" : project.rootPath + " · натисніть, щоб змінити")
     }
 }
 

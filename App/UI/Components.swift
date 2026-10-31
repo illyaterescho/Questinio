@@ -1,18 +1,39 @@
 import SwiftUI
 
-// Shared visual language: material cards, coloured status chips, empty states.
-struct CardStyle: ViewModifier {
-    var padding: CGFloat = 16
-    func body(content: Content) -> some View {
-        content.padding(padding)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.primary.opacity(0.07)))
-    }
-}
+// Shared visual language: Liquid Glass (macOS 26+) over a soft ambient backdrop,
+// with a material fallback on older systems.
 extension View {
-    func card(padding: CGFloat = 16) -> some View { modifier(CardStyle(padding: padding)) }
+    @ViewBuilder func glass<S: Shape>(_ shape: S, tint: Color? = nil, interactive: Bool = false) -> some View {
+        if #available(macOS 26, *) { glassEffect(Glass.regular.tint(tint).interactive(interactive), in: shape) }
+        else { background(.regularMaterial, in: shape).overlay(shape.stroke(.primary.opacity(0.08))) }
+    }
+    func card(padding: CGFloat = 16) -> some View { self.padding(padding).glass(RoundedRectangle(cornerRadius: 22, style: .continuous)) }
+    @ViewBuilder func glassButton(prominent: Bool = false) -> some View {
+        if #available(macOS 26, *) { if prominent { buttonStyle(.glassProminent) } else { buttonStyle(.glass) } }
+        else { if prominent { buttonStyle(.borderedProminent) } else { buttonStyle(.bordered) } }
+    }
     func appColorScheme(_ appearance: String) -> some View {
         preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
+    }
+}
+struct GlassGroup<Content: View>: View {
+    var spacing: CGFloat = 12
+    @ViewBuilder var content: Content
+    var body: some View {
+        if #available(macOS 26, *) { GlassEffectContainer(spacing: spacing) { content } } else { content }
+    }
+}
+/// Soft colour fields behind the glass so it has something to refract.
+struct AmbientBackground: View {
+    @Environment(\.colorScheme) private var scheme
+    var body: some View {
+        let strength = scheme == .dark ? 0.32 : 0.22
+        ZStack {
+            Color(nsColor: .windowBackgroundColor)
+            Circle().fill(Color.blue.opacity(strength)).frame(width: 520).blur(radius: 140).offset(x: -260, y: -220)
+            Circle().fill(Color.purple.opacity(strength * 0.8)).frame(width: 460).blur(radius: 150).offset(x: 320, y: -120)
+            Circle().fill(Color.teal.opacity(strength * 0.7)).frame(width: 480).blur(radius: 150).offset(x: 120, y: 300)
+        }.ignoresSafeArea().allowsHitTesting(false)
     }
 }
 struct CardHeader<Trailing: View>: View {
@@ -66,8 +87,8 @@ struct StatusPill: View {
             Text(title).fontWeight(.medium)
             Text(value).foregroundStyle(.secondary).lineLimit(1)
         }
-        .font(.caption).padding(.horizontal, 10).padding(.vertical, 6)
-        .background(.quaternary.opacity(0.6), in: Capsule()).help(title + ": " + value)
+        .font(.caption).padding(.horizontal, 11).padding(.vertical, 7)
+        .glass(Capsule()).help(title + ": " + value)
     }
 }
 struct AudioMeter: View {
@@ -86,7 +107,7 @@ struct AudioMeter: View {
             }
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(.quaternary)
+                    Capsule().fill(.primary.opacity(0.08))
                     Capsule().fill(LinearGradient(colors: [.green, fill > 0.8 ? .orange : .accentColor], startPoint: .leading, endPoint: .trailing))
                         .frame(width: max(4, geometry.size.width * fill))
                         .animation(.easeOut(duration: 0.12), value: fill)
@@ -120,7 +141,7 @@ struct AnswerCard: View {
             CardHeader("Відповідь", symbol: "sparkles") {
                 if model.generating {
                     ProgressView().controlSize(.small)
-                    Button("Стоп", action: model.cancelGeneration).controlSize(.small)
+                    Button("Стоп", action: model.cancelGeneration).controlSize(.small).glassButton()
                 }
                 Button { model.editLatestQuestion() } label: { Image(systemName: "pencil") }
                     .buttonStyle(.borderless).help("Виправити розпізнане питання")
@@ -130,7 +151,7 @@ struct AnswerCard: View {
                             TextEditor(text: $model.editedQuestion).font(.body).frame(width: 380, height: 100)
                                 .scrollContentBackground(.hidden).padding(6)
                                 .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
-                            HStack { Button("Скасувати") { model.cancelQuestionEdit() }; Spacer(); Button("Відповісти з виправленням") { model.retryEditedQuestion() }.buttonStyle(.borderedProminent) }
+                            HStack { Button("Скасувати") { model.cancelQuestionEdit() }.glassButton(); Spacer(); Button("Відповісти з виправленням") { model.retryEditedQuestion() }.glassButton(prominent: true) }
                         }.padding(16)
                     }
                 Button { model.copyAnswer() } label: { Image(systemName: "doc.on.doc") }
@@ -138,8 +159,8 @@ struct AnswerCard: View {
             }
             if !model.question.isEmpty {
                 Text(model.question).font(.callout.weight(.medium)).lineLimit(compact ? 3 : 5).textSelection(.enabled)
-                    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
             if model.answer.isEmpty && !model.generating {
                 EmptyState(symbol: "sparkles", title: "Відповідь з’явиться тут", hint: "Поставте питання внизу або натисніть на питання зі списку.")

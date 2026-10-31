@@ -83,8 +83,10 @@ final class CopilotPanel: NSPanel {
         guard let model else { return }
         if let panel, panel.isVisible { panel.orderOut(nil); return }
         if panel == nil {
-            let panel = CopilotPanel(contentRect: NSRect(x: 240, y: 240, width: 470, height: 430), styleMask: [.titled, .closable, .resizable, .utilityWindow, .nonactivatingPanel], backing: .buffered, defer: false)
+            let panel = CopilotPanel(contentRect: NSRect(x: 240, y: 240, width: 470, height: 430), styleMask: [.titled, .closable, .resizable, .utilityWindow, .nonactivatingPanel, .fullSizeContentView], backing: .buffered, defer: false)
             panel.title = "Questionio · Notes"; panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false
+            // Transparent window so the Liquid Glass panel refracts the desktop behind it.
+            panel.titlebarAppearsTransparent = true; panel.titleVisibility = .hidden; panel.isOpaque = false; panel.backgroundColor = .clear; panel.isMovableByWindowBackground = true
             panel.contentView = NSHostingView(rootView: FloatingView(model: model))
             panel.minSize = NSSize(width: 340, height: 280); panel.setFrameAutosaveName("QuestionioFloating")
             self.panel = panel
