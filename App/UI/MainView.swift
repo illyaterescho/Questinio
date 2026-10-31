@@ -16,7 +16,7 @@ struct MainView: View {
                 Label("Контекст і код", systemImage: "chevron.left.forwardslash.chevron.right").tag("Context")
                 Label("Історія", systemImage: "clock.arrow.circlepath").tag("History")
                 Label("Діагностика", systemImage: "stethoscope").tag("Diagnostics")
-            }.navigationTitle("Questionio").navigationSplitViewColumnWidth(min: 170, ideal: 190)
+            }.scrollContentBackground(.hidden).navigationTitle("Questionio").navigationSplitViewColumnWidth(min: 170, ideal: 190)
             .safeAreaInset(edge: .bottom) {
                 Label { VStack(alignment: .leading, spacing: 2) { Text("Усе локально").font(.caption.weight(.medium)); Text("без хмари й підписок").font(.caption2).foregroundStyle(.secondary) } } icon: { Image(systemName: "lock.shield.fill").foregroundStyle(.green) }
                     .frame(maxWidth: .infinity, alignment: .leading).padding(12)
@@ -27,8 +27,8 @@ struct MainView: View {
                 else if selection == "History" { HistoryView(model: model) }
                 else if selection == "Diagnostics" { DiagnosticsView(model: model) }
                 else { LiveView(model: model) }
-            }.background(AmbientBackground())
-        }.frame(minWidth: 980, minHeight: 640).appColorScheme(model.settings.appearance)
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        }.background(AmbientBackground()).frame(minWidth: 980, minHeight: 640).appColorScheme(model.settings.appearance)
         .toolbar {
             ToolbarItemGroup {
                 Button { Task { await model.newConversation() } } label: { Label("Нова сесія", systemImage: "square.and.pencil") }.help("Нова сесія").disabled(model.starting || model.stopping)
@@ -126,7 +126,7 @@ struct LiveView: View {
                     Button { model.error = "" } label: { Image(systemName: "xmark") }.buttonStyle(.borderless)
                 }.foregroundStyle(.orange).padding(14).glass(RoundedRectangle(cornerRadius: 18, style: .continuous), tint: .orange.opacity(0.25))
             }
-            HSplitView {
+            HStack(alignment: .top, spacing: 16) {
                 VStack(spacing: 14) {
                     VStack(alignment: .leading, spacing: 10) {
                         CardHeader("Питання", symbol: "questionmark.bubble") {
@@ -136,8 +136,8 @@ struct LiveView: View {
                         QuestionInboxView(model: model)
                     }.card().frame(minHeight: 200, maxHeight: .infinity)
                     transcript
-                }.frame(minWidth: 300, idealWidth: 360, maxWidth: 520)
-                AnswerCard(model: model).frame(minWidth: 420, maxHeight: .infinity)
+                }.frame(width: 360)
+                AnswerCard(model: model).frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             bottomBar
         }.padding(20)

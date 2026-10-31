@@ -29,7 +29,7 @@ struct AmbientBackground: View {
     var body: some View {
         let strength = scheme == .dark ? 0.32 : 0.22
         ZStack {
-            Color(nsColor: .windowBackgroundColor)
+            scheme == .dark ? Color(white: 0.07) : Color.white
             Circle().fill(Color.blue.opacity(strength)).frame(width: 520).blur(radius: 140).offset(x: -260, y: -220)
             Circle().fill(Color.purple.opacity(strength * 0.8)).frame(width: 460).blur(radius: 150).offset(x: 320, y: -120)
             Circle().fill(Color.teal.opacity(strength * 0.7)).frame(width: 480).blur(radius: 150).offset(x: 120, y: 300)

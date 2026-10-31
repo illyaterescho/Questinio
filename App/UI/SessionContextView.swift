@@ -14,7 +14,7 @@ struct SessionContextView: View {
                 CardHeader("Папка проєкту", symbol: "folder") { IDEContextView(editor: model.editor) }
                 ProjectContextView(project: model.project)
             }.card()
-            HSplitView {
+            HStack(alignment: .top, spacing: 16) {
                 VStack(alignment: .leading, spacing: 10) {
                     CardHeader("Показаний код", symbol: "text.viewfinder") { Toggle("Знімок / OCR", isOn: $screen.enabled).toggleStyle(.switch).controlSize(.mini); Button("Очистити") { screen.clear() }.controlSize(.small) }
                     HStack {
