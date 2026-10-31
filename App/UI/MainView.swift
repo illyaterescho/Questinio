@@ -9,7 +9,6 @@ private func clock(_ seconds: TimeInterval) -> String { String(format: "%d:%02d"
 struct MainView: View {
     @ObservedObject var model: ConversationManager
     @State private var selection = "Live"
-    @State private var showSource = false
     var body: some View {
         NavigationSplitView {
             List(selection: $selection) {
@@ -19,7 +18,7 @@ struct MainView: View {
                 Label("Діагностика", systemImage: "stethoscope").tag("Diagnostics")
             }.navigationTitle("Questionio").navigationSplitViewColumnWidth(min: 170, ideal: 190)
             .safeAreaInset(edge: .bottom) {
-                Label { VStack(alignment: .leading, spacing: 2) { Text("Усе локально").font(.caption.weight(.medium)); Text("Whisper + Ollama · без хмари").font(.caption2).foregroundStyle(.secondary) } } icon: { Image(systemName: "lock.shield.fill").foregroundStyle(.green) }
+                Label { VStack(alignment: .leading, spacing: 2) { Text("Усе локально").font(.caption.weight(.medium)); Text("без хмари й підписок").font(.caption2).foregroundStyle(.secondary) } } icon: { Image(systemName: "lock.shield.fill").foregroundStyle(.green) }
                     .frame(maxWidth: .infinity, alignment: .leading).padding(12)
             }
         } detail: {
@@ -29,17 +28,15 @@ struct MainView: View {
                 else if selection == "Diagnostics" { DiagnosticsView(model: model) }
                 else { LiveView(model: model) }
             }.background(AmbientBackground())
-        }.frame(minWidth: 900, minHeight: 620).appColorScheme(model.settings.appearance)
+        }.frame(minWidth: 980, minHeight: 640).appColorScheme(model.settings.appearance)
         .toolbar {
             ToolbarItemGroup {
-                Button { showSource.toggle() } label: { Label("Джерело звуку", systemImage: "slider.horizontal.3") }
-                    .help("Джерело звуку").popover(isPresented: $showSource, arrowEdge: .bottom) { CaptureSourceView(model: model).frame(width: 440).padding(16) }
-                Button { Task { await model.newConversation() } } label: { Label("Нова сесія", systemImage: "plus") }.help("Нова сесія").disabled(model.starting || model.stopping)
-                Button { model.togglePanel?() } label: { Label("Плаваюче вікно", systemImage: "pip") }.help("Плаваюче вікно")
+                Button { Task { await model.newConversation() } } label: { Label("Нова сесія", systemImage: "square.and.pencil") }.help("Нова сесія").disabled(model.starting || model.stopping)
+                Button { model.togglePanel?() } label: { Label("Плаваюче вікно", systemImage: "pip") }.help("Плаваюче вікно (⌃⌥⌘P)")
                 Menu {
                     Button("Зберегти діалог…") { Task { await model.exportDialogue() } }.disabled(model.transcriptCount == 0)
                     Button("Відновити останній діалог") { Task { await model.recoverDialogue() } }.disabled(model.running || model.starting || model.stopping)
-                } label: { Label("Ще", systemImage: "ellipsis.circle") }
+                } label: { Label("Ще", systemImage: "ellipsis") }
                 SettingsLink { Label("Налаштування", systemImage: "gearshape") }.help("Налаштування")
             }
         }
@@ -69,10 +66,49 @@ struct RecordButton: View {
     }
 }
 
+/// Floating glass control that opens its own panel — the macOS Tahoe pattern.
+struct GlassChip<Panel: View>: View {
+    let symbol: String
+    let title: String
+    let value: String
+    var tone: StatusTone?
+    var accessory: AnyView?
+    @ViewBuilder var panel: Panel
+    @State private var open = false
+    var body: some View {
+        Button { open.toggle() } label: {
+            HStack(spacing: 8) {
+                Image(systemName: symbol).font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary).frame(width: 16)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).font(.caption2).foregroundStyle(.secondary)
+                    HStack(spacing: 5) {
+                        if let tone { Circle().fill(tone.color).frame(width: 6, height: 6) }
+                        Text(value).font(.caption.weight(.semibold)).lineLimit(1)
+                    }
+                }
+                if let accessory { accessory }
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold)).foregroundStyle(.tertiary)
+            }.padding(.horizontal, 12).padding(.vertical, 7).contentShape(Capsule())
+            .glass(Capsule(), interactive: true)
+        }.buttonStyle(.plain).help(title + ": " + value)
+        .popover(isPresented: $open, arrowEdge: .bottom) { panel.padding(16) }
+    }
+}
+struct MiniMeter: View {
+    let level: Float
+    var body: some View {
+        let fill = min(1, Double(level) * 8)
+        ZStack(alignment: .bottom) {
+            Capsule().fill(.primary.opacity(0.1))
+            Capsule().fill(fill > 0.8 ? Color.orange : Color.green).frame(height: max(3, 18 * fill)).animation(.easeOut(duration: 0.12), value: fill)
+        }.frame(width: 4, height: 18)
+    }
+}
+
 struct LiveView: View {
     @ObservedObject var model: ConversationManager
     @State private var transcriptSource = AudioSource.system
-    @State private var transcriptExpanded = true
+    @State private var showTranscript = true
     private var warnings: [String] {
         var result: [String] = []
         if model.pendingAudioSeconds > 3 { result.append("Черга розпізнавання: \(Int(model.pendingAudioSeconds)) с") }
@@ -80,9 +116,11 @@ struct LiveView: View {
         if model.droppedAudioFrames > 0 { result.append("Втрачено кадрів: \(model.droppedAudioFrames)") }
         return result
     }
+    private var engineName: String { model.settings.speechEngine == "parakeet" ? "Parakeet v3" : "Whisper" }
+    private var activeModel: String { model.settings.fastAnswers && model.models.contains(where: { $0.name == model.settings.fastModel }) ? model.settings.fastModel : model.settings.model }
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            header
+        VStack(spacing: 16) {
+            controlBar
             if !model.error.isEmpty {
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -96,85 +134,150 @@ struct LiveView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         CardHeader("Питання", symbol: "questionmark.bubble") {
                             Text("\(model.questionInbox.entries.count)").font(.caption.weight(.semibold)).monospacedDigit()
-                                .padding(.horizontal, 9).padding(.vertical, 3).glass(Capsule())
+                                .padding(.horizontal, 9).padding(.vertical, 3).background(.primary.opacity(0.07), in: Capsule())
                         }
                         QuestionInboxView(model: model)
-                    }.card().frame(minHeight: 180)
+                    }.card().frame(minHeight: 200, maxHeight: .infinity)
                     transcript
-                }.frame(minWidth: 300, idealWidth: 380)
-                AnswerCard(model: model).frame(minWidth: 340)
+                }.frame(minWidth: 300, idealWidth: 360, maxWidth: 520)
+                AnswerCard(model: model).frame(minWidth: 420, maxHeight: .infinity)
             }
-            composer
+            bottomBar
         }.padding(20)
     }
-    private var header: some View {
-        VStack(spacing: 12) {
-            headerTop
-            HStack(spacing: 20) {
-                if model.settings.effectiveAudioMode != .microphone { AudioMeter(label: "Співрозмовник", level: model.systemLevel, status: model.systemStatus, symbol: "speaker.wave.2") }
-                if model.settings.effectiveAudioMode != .system { AudioMeter(label: "Я", level: model.micLevel, status: model.micStatus, symbol: "mic") }
-                CompactProjectContext(project: model.project).frame(maxWidth: 260, alignment: .trailing)
-            }
-        }.card(padding: 14)
-    }
-    private var headerTop: some View {
-        HStack(alignment: .center, spacing: 16) {
-            RecordButton(model: model)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(model.stopping ? "Завершую розпізнавання…" : model.starting ? "Запускаю…" : model.running ? "Слухаю · \(clock(model.sessionSeconds))" : "Готово до запису")
-                    .font(.title3.weight(.semibold)).monospacedDigit()
-                Text(model.running ? model.captureSourceName : model.configuredSourceName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            }
-            Spacer(minLength: 12)
-            VStack(alignment: .trailing, spacing: 8) {
-                HStack(spacing: 8) {
-                    if !warnings.isEmpty {
-                        Label("\(warnings.count)", systemImage: "exclamationmark.triangle.fill").font(.caption.weight(.semibold)).foregroundStyle(.orange)
-                            .padding(.horizontal, 11).padding(.vertical, 7).glass(Capsule(), tint: .orange.opacity(0.35))
-                            .help(warnings.joined(separator: "\n"))
-                    }
-                    GlassGroup(spacing: 8) {
-                        HStack(spacing: 8) {
-                            StatusPill(title: "Голос", value: model.whisperStatus, symbol: "waveform")
-                            StatusPill(title: "AI", value: model.ollamaStatus, symbol: "cpu")
-                        }
-                    }
+    // Source · record · engine · AI · code — one row of floating glass controls.
+    private var controlBar: some View {
+        GlassGroup(spacing: 10) {
+            HStack(spacing: 10) {
+                GlassChip(symbol: model.settings.effectiveAudioMode == .microphone ? "mic" : "speaker.wave.2", title: "Джерело · " + model.settings.effectiveAudioMode.label,
+                          value: model.running ? model.captureSourceName : model.configuredSourceName,
+                          accessory: AnyView(HStack(spacing: 3) {
+                              if model.settings.effectiveAudioMode != .microphone { MiniMeter(level: model.systemLevel) }
+                              if model.settings.effectiveAudioMode != .system { MiniMeter(level: model.micLevel) }
+                          })) { CaptureSourceView(model: model).frame(width: 440) }
+                    .frame(maxWidth: 300, alignment: .leading)
+                Spacer(minLength: 8)
+                HStack(spacing: 12) {
+                    RecordButton(model: model, size: 52)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model.running ? clock(model.sessionSeconds) : "Запис").font(.title2.weight(.semibold)).monospacedDigit()
+                        Text(model.stopping ? "Завершую…" : model.starting ? "Запускаю…" : model.running ? "Слухаю" : "Натисніть, щоб почати").font(.caption).foregroundStyle(.secondary)
+                    }.frame(width: 140, alignment: .leading)
                 }
-                HStack(spacing: 14) {
-                    Toggle("Автовідповіді", isOn: $model.settings.automatic)
-                    Toggle("Швидкий режим · 4B", isOn: $model.settings.fastAnswers).help("Швидше, але може помилятися в коді")
-                }.toggleStyle(.switch).controlSize(.mini).font(.caption)
+                Spacer(minLength: 8)
+                if !warnings.isEmpty {
+                    Label("\(warnings.count)", systemImage: "exclamationmark.triangle.fill").font(.caption.weight(.semibold)).foregroundStyle(.orange)
+                        .padding(.horizontal, 11).padding(.vertical, 9).glass(Capsule(), tint: .orange.opacity(0.35)).help(warnings.joined(separator: "\n"))
+                }
+                GlassChip(symbol: "waveform", title: "Розпізнавання", value: engineName, tone: StatusTone.of(model.whisperStatus)) { EnginePanel(model: model).frame(width: 340) }
+                GlassChip(symbol: "cpu", title: "Модель AI", value: activeModel, tone: StatusTone.of(model.ollamaStatus)) { ModelPanel(model: model).frame(width: 340) }
+                GlassChip(symbol: model.project.rootPath.isEmpty ? "folder.badge.plus" : "folder.fill", title: "Код",
+                          value: model.project.rootPath.isEmpty ? "Не підключено" : URL(fileURLWithPath: model.project.rootPath).lastPathComponent) { ProjectPanel(project: model.project).frame(width: 340) }
             }
         }
     }
     private var transcript: some View {
         VStack(alignment: .leading, spacing: 10) {
             CardHeader("Транскрипт", symbol: "text.quote") {
-                if model.settings.effectiveAudioMode == .both {
+                if model.settings.effectiveAudioMode == .both && showTranscript {
                     Picker("", selection: $transcriptSource) { Text("Співрозмовник").tag(AudioSource.system); Text("Я").tag(AudioSource.microphone) }
                         .pickerStyle(.segmented).labelsHidden().frame(width: 190)
                 }
-                Button { withAnimation(.snappy) { transcriptExpanded.toggle() } } label: { Image(systemName: transcriptExpanded ? "chevron.down" : "chevron.right") }
-                    .buttonStyle(.borderless).help(transcriptExpanded ? "Згорнути" : "Розгорнути")
+                Button { withAnimation(.snappy) { showTranscript.toggle() } } label: { Image(systemName: "chevron.down").rotationEffect(.degrees(showTranscript ? 0 : -90)) }
+                    .buttonStyle(.borderless).help(showTranscript ? "Згорнути" : "Розгорнути")
             }
-            if transcriptExpanded {
+            if showTranscript {
                 let source = model.settings.effectiveAudioMode == .microphone ? .microphone : (model.settings.effectiveAudioMode == .system ? .system : transcriptSource)
                 TranscriptCard(confirmed: source == .system ? model.systemTranscript : model.microphoneTranscript,
                                interim: source == .system ? model.systemInterim : model.microphoneInterim)
-                Text("Сірий текст — чернетка · останнє розпізнавання \(model.decodeSeconds, specifier: "%.2f") с · \(model.transcriptCount) записів")
+                Text("Сірий текст — чернетка · \(model.decodeSeconds, specifier: "%.2f") с на фразу · \(model.transcriptCount) записів")
                     .font(.caption2).foregroundStyle(.tertiary).monospacedDigit()
             }
-        }.card().frame(minHeight: transcriptExpanded ? 160 : nil)
+        }.card().frame(height: showTranscript ? 230 : nil)
     }
-    private var composer: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "text.cursor").foregroundStyle(.tertiary)
-            TextField("Поставте питання або натисніть Enter для останньої фрази…", text: $model.manualQuestion, axis: .vertical)
-                .textFieldStyle(.plain).lineLimit(1...4).onSubmit { model.generateManual() }
-            Button { model.generateManual() } label: { Image(systemName: "arrow.up").font(.system(size: 14, weight: .bold)).frame(width: 22, height: 22) }
-                .glassButton(prominent: true).buttonBorderShape(.circle).help("Відповісти (⌃⌥⌘G)").keyboardShortcut(.return, modifiers: .command)
-        }.padding(.leading, 18).padding(.trailing, 8).padding(.vertical, 8)
-        .glass(Capsule(), interactive: true)
+    private var bottomBar: some View {
+        GlassGroup(spacing: 10) {
+            HStack(spacing: 10) {
+                Toggle(isOn: $model.settings.automatic) { Label("Авто", systemImage: "bolt.fill") }
+                    .toggleStyle(.button).glassButton(prominent: model.settings.automatic).controlSize(.large)
+                    .help("Автоматично відповідати на завершені питання")
+                if model.settings.effectiveAudioMode != .system {
+                    Button { model.toggleMySpeaking() } label: { Label(model.mySpeaking ? "Слухати" : "Я говорю", systemImage: model.mySpeaking ? "ear" : "mic.slash") }
+                        .glassButton().controlSize(.large).disabled(!model.running).help("Пауза мікрофона, поки ви говорите (⌃⌥⌘M)")
+                }
+                HStack(spacing: 10) {
+                    TextField("Запитайте що завгодно або натисніть ⌘↩ для останньої фрази…", text: $model.manualQuestion, axis: .vertical)
+                        .textFieldStyle(.plain).lineLimit(1...4).onSubmit { model.generateManual() }
+                    Button { model.generateManual() } label: { Image(systemName: "arrow.up").font(.system(size: 14, weight: .bold)).frame(width: 22, height: 22) }
+                        .glassButton(prominent: true).buttonBorderShape(.circle).help("Відповісти (⌃⌥⌘G)").keyboardShortcut(.return, modifiers: .command)
+                }.padding(.leading, 18).padding(.trailing, 7).padding(.vertical, 7)
+                .glass(Capsule(), interactive: true)
+            }
+        }
+    }
+}
+
+struct EnginePanel: View {
+    @ObservedObject var model: ConversationManager
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Розпізнавання голосу").font(.headline)
+            Picker("", selection: $model.settings.speechEngine) {
+                VStack(alignment: .leading) { Text("Whisper"); Text("Найточніший для української й IT-термінів").font(.caption).foregroundStyle(.secondary) }.tag("whisper")
+                VStack(alignment: .leading) { Text("Parakeet v3"); Text("У 10+ разів швидший і легший, Neural Engine").font(.caption).foregroundStyle(.secondary) }.tag("parakeet")
+            }.pickerStyle(.radioGroup).labelsHidden().disabled(model.running || model.starting || model.modelBusy)
+            if model.settings.speechEngine == "parakeet" && !ParakeetRecognitionService.installed {
+                Button("Завантажити Parakeet (~0.5 ГБ)") { Task { await model.downloadModel() } }.glassButton(prominent: true).disabled(model.modelBusy)
+            }
+            Label(model.whisperStatus, systemImage: "circle.fill").font(.caption).foregroundStyle(StatusTone.of(model.whisperStatus).color)
+            if model.running { Text("Змінити рушій можна після зупинки запису.").font(.caption).foregroundStyle(.secondary) }
+            Divider()
+            SettingsLink { Label("Мова, терміни й моделі Whisper…", systemImage: "gearshape") }.buttonStyle(.link).font(.caption)
+        }
+    }
+}
+
+struct ModelPanel: View {
+    @ObservedObject var model: ConversationManager
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Модель AI · Ollama").font(.headline)
+            if model.models.isEmpty { Text("Ollama не знайдено або моделі не встановлені.").font(.caption).foregroundStyle(.secondary) }
+            else {
+                Picker("", selection: $model.settings.model) {
+                    ForEach(model.models) { Text($0.name + "  ·  " + String(format: "%.1f ГБ", Double($0.size) / 1e9)).tag($0.name) }
+                    if !model.models.contains(where: { $0.name == model.settings.model }) { Text(model.settings.model).tag(model.settings.model) }
+                }.pickerStyle(.radioGroup).labelsHidden()
+            }
+            Toggle("Швидкий режим · \(model.settings.fastModel)", isOn: $model.settings.fastAnswers).help("Швидше, але може помилятися в коді")
+            Toggle("Режим міркувань", isOn: $model.settings.thinking)
+            Label(model.ollamaStatus, systemImage: "circle.fill").font(.caption).foregroundStyle(StatusTone.of(model.ollamaStatus).color)
+            Divider()
+            HStack {
+                Button("Оновити список") { Task { await model.refreshModels() } }.glassButton()
+                Spacer()
+                SettingsLink { Label("Контекст і промпт…", systemImage: "gearshape") }.buttonStyle(.link).font(.caption)
+            }
+        }
+    }
+}
+
+struct ProjectPanel: View {
+    @ObservedObject var project: ProjectContextService
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Папка з кодом").font(.headline)
+            Text(project.rootPath.isEmpty ? "Підключіть папку проєкту — відповіді на питання про код спиратимуться на точні рядки." : project.rootPath)
+                .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            if !project.rootPath.isEmpty { Label(project.status, systemImage: "doc.text.magnifyingglass").font(.caption) }
+            HStack {
+                Button(project.rootPath.isEmpty ? "Вибрати папку…" : "Змінити…") { project.chooseFolder() }.glassButton(prominent: project.rootPath.isEmpty)
+                if !project.rootPath.isEmpty {
+                    Button("Оновити") { Task { await project.refresh() } }.glassButton().disabled(project.busy)
+                    Button("Від’єднати", role: .destructive) { project.connect("") }.glassButton()
+                }
+            }
+        }
     }
 }
 
@@ -261,6 +364,12 @@ struct CaptureSourceView: View {
                     Picker("", selection: $model.settings.audioMode) { ForEach(AudioMode.allCases, id: \.self) { Text($0.label).tag($0) } }.labelsHidden()
                 }
                 GridRow {
+                    Text("Рушій").foregroundStyle(.secondary)
+                    Picker("", selection: $model.settings.audioBackend) { Text("Core Audio Tap · лише звук").tag("Core Audio Tap"); Text("ScreenCaptureKit").tag("ScreenCaptureKit") }
+                        .pickerStyle(.segmented).labelsHidden().disabled(model.settings.audioMode == .microphone)
+                        .onChange(of: model.settings.audioBackend) { Task { await model.refreshApplications() } }
+                }
+                GridRow {
                     Text("Програма").foregroundStyle(.secondary)
                     HStack {
                         Picker("", selection: $model.settings.applicationID) {
@@ -283,9 +392,6 @@ struct CaptureSourceView: View {
                 }
             }.disabled(locked || model.diagnostics.testing)
             Toggle("Записувати й мій мікрофон у режимі «Обидва»", isOn: $model.settings.captureMyVoice).disabled(locked)
-            if model.settings.effectiveAudioMode != .system {
-                Button(model.mySpeaking ? "Слухати далі" : "Я говорю · пауза мікрофона") { model.toggleMySpeaking() }.disabled(!model.running).help("⌃⌥⌘M · у спільному мікрофоні голоси розділяються вручну")
-            }
             Divider()
             VStack(alignment: .leading, spacing: 4) {
                 Label(model.running ? model.captureSourceName : model.configuredSourceName, systemImage: "app.badge")
@@ -298,16 +404,6 @@ struct CaptureSourceView: View {
                 Button { model.settings.privateWindow.toggle() } label: { Label(model.settings.privateWindow ? "Ghost ON" : "Ghost OFF", systemImage: model.settings.privateWindow ? "eye.slash" : "eye") }.glassButton().controlSize(.small)
             }
         }
-    }
-}
-
-struct CompactProjectContext: View {
-    @ObservedObject var project: ProjectContextService
-    var body: some View {
-        Button { project.chooseFolder() } label: {
-            Label(project.rootPath.isEmpty ? "Підключити папку з кодом" : URL(fileURLWithPath: project.rootPath).lastPathComponent + " · \(project.files.count) файлів", systemImage: project.rootPath.isEmpty ? "folder.badge.plus" : "folder.fill")
-                .font(.caption).lineLimit(1)
-        }.glassButton().controlSize(.small).help(project.rootPath.isEmpty ? "Вибрати папку проєкту" : project.rootPath + " · натисніть, щоб змінити")
     }
 }
 
