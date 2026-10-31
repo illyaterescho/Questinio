@@ -172,19 +172,7 @@ import LocalCopilotCore
                    Date().timeIntervalSince(self.lastModelRetry) >= 15 {
                     Task { await self.refreshModels() }
                 }
-                let activeModel = self.settings.fastAnswers && self.models.contains(where: { $0.name == self.settings.fastModel }) ? self.settings.fastModel : self.settings.model
-                // Keep the model hot only while capturing; idle Ollama unloads it after keepAlive.
-                if self.running && self.lastModelTouch != .distantPast && !self.generating && !self.summarizing && !self.periodicWarmup && self.models.contains(where: { $0.name == activeModel }) && Date().timeIntervalSince(self.lastModelTouch) >= 10 * 60 {
-                    self.periodicWarmup = true
-                    let contextTokens = self.settings.contextTokens
-                    Task { [weak self, ollama = self.ollama] in
-                        defer { self?.periodicWarmup = false }
-                        do {
-                            try await ollama.warm(model: activeModel, contextTokens: contextTokens)
-                            self?.lastModelTouch = Date()
-                        } catch { self?.diagnostics.log("Background model keepalive failed: \(error.localizedDescription)") }
-                    }
-                }
+                self.keepModelWarm()
                 if self.editor.enabled, !self.project.rootPath.isEmpty,
                    let snapshot = self.editor.snapshot(root: self.project.rootPath) {
                     self.project.observe(snapshot)
@@ -232,6 +220,21 @@ import LocalCopilotCore
                     }
                 }
             }
+        }
+    }
+    // Keep the model hot only while capturing; idle Ollama unloads it after keepAlive.
+    private func keepModelWarm() {
+        let activeModel = settings.fastAnswers && models.contains(where: { $0.name == settings.fastModel }) ? settings.fastModel : settings.model
+        guard running, !generating, !summarizing, !periodicWarmup, models.contains(where: { $0.name == activeModel }),
+              Date().timeIntervalSince(lastModelTouch) >= 10 * 60 else { return }
+        periodicWarmup = true
+        let contextTokens = settings.contextTokens
+        Task { [weak self, ollama] in
+            defer { self?.periodicWarmup = false }
+            do {
+                try await ollama.warm(model: activeModel, contextTokens: contextTokens)
+                self?.lastModelTouch = Date()
+            } catch { self?.diagnostics.log("Background model keepalive failed: \(error.localizedDescription)") }
         }
     }
     private var usesParakeet: Bool { settings.speechEngine == "parakeet" }
@@ -361,6 +364,7 @@ import LocalCopilotCore
             activeCaptureSettings = snapshot
             running = true; routeSignature = MicrophoneManager.routeSignature()
             project.startWatching()
+            keepModelWarm() // first answer of a session never waits for a cold model load
             captureBegan = Date()
             droppedAudioFrames = 0
             ensureJournalContext()
