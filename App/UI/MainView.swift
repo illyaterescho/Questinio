@@ -1,4 +1,5 @@
 import SwiftUI
+import ApplicationServices
 import LocalCopilotCore
 
 extension AudioMode {
@@ -162,7 +163,7 @@ struct LiveView: View {
             BarChip(symbol: "waveform", value: engineName, help: "Розпізнавання · " + model.whisperStatus, tone: StatusTone.of(model.whisperStatus)) { EnginePanel(model: model).frame(width: 340) }
             BarChip(symbol: "cpu", value: activeModel, help: "Модель AI · " + model.ollamaStatus, tone: StatusTone.of(model.ollamaStatus), maxWidth: 130) { ModelPanel(model: model).frame(width: 340) }
             BarChip(symbol: model.project.rootPath.isEmpty ? "folder.badge.plus" : "folder", value: model.project.rootPath.isEmpty ? "Код" : URL(fileURLWithPath: model.project.rootPath).lastPathComponent,
-                    help: "Папка з кодом", maxWidth: 120) { ProjectPanel(project: model.project).frame(width: 340) }
+                    help: "Папка з кодом", maxWidth: 120) { ProjectPanel(model: model).frame(width: 360) }
             barDivider
             if !warnings.isEmpty {
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).frame(width: UI.control, height: UI.control).help(warnings.joined(separator: "\n"))
@@ -236,7 +237,7 @@ struct ModelPanel: View {
             ClaudeSection(model: model)
             Divider()
             Text("Ollama · локально").font(.subheadline.weight(.semibold))
-            if model.models.isEmpty { Text("Ollama не знайдено або моделі не встановлені.").font(.caption).foregroundStyle(.secondary) }
+            if model.models.isEmpty { Text("Ollama не запущена. Вона стартує лише за кнопкою нижче.").font(.caption).foregroundStyle(.secondary) }
             else {
                 Picker("", selection: $model.settings.model) {
                     ForEach(model.models) { Text($0.name + "  ·  " + String(format: "%.1f ГБ", Double($0.size) / 1e9)).tag($0.name) }
@@ -248,7 +249,7 @@ struct ModelPanel: View {
             Label(model.ollamaStatus, systemImage: "circle.fill").font(.caption).foregroundStyle(StatusTone.of(model.ollamaStatus).color)
             Divider()
             HStack {
-                Button("Оновити список") { Task { await model.refreshModels() } }.glassButton()
+                Button(model.models.isEmpty ? "Запустити Ollama" : "Оновити список") { Task { await model.refreshModels(launch: true) } }.glassButton()
                 Spacer()
                 SettingsLink { Label("Контекст і промпт…", systemImage: "gearshape") }.buttonStyle(.link).font(.caption)
             }
@@ -280,26 +281,46 @@ struct ClaudeSection: View {
             }
             Stepper(String(format: "Денний ліміт: $%.2f", model.settings.claudeDailyLimitUSD), value: $model.settings.claudeDailyLimitUSD, in: 0.25...20, step: 0.25)
             Text(String(format: "Витрачено сьогодні: $%.4f", model.claudeSpentToday)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
-            Toggle("Слати скриншоти в Claude (для питань про графіки)", isOn: $model.settings.claudeSendScreenshots)
-            Text("З ключем в Anthropic ідуть текст розмови, фрагменти коду й OCR. Аудіо лишається на цьому Mac.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Toggle("Слати знімок вікна IDE (питання про код і графіки)", isOn: $model.settings.claudeSendScreenshots)
+            Text("З ключем в Anthropic ідуть текст розмови, фрагменти коду, OCR і знімок вікна IDE для питань про код. Аудіо лишається на цьому Mac.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }.task { await model.refreshClaudeSpend() }
     }
 }
 
+/// Everything the assistant may read for code questions: folder, open IDE file, IDE window.
 struct ProjectPanel: View {
+    @ObservedObject var model: ConversationManager
     @ObservedObject var project: ProjectContextService
+    @ObservedObject var editor: IDEContextService
+    @ObservedObject var screen: ScreenContextService
+    init(model: ConversationManager) { self.model = model; project = model.project; editor = model.editor; screen = model.screen }
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Папка з кодом").font(.headline)
-            Text(project.rootPath.isEmpty ? "Підключіть папку проєкту — відповіді на питання про код спиратимуться на точні рядки." : project.rootPath)
-                .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-            if !project.rootPath.isEmpty { Label(project.status, systemImage: "doc.text.magnifyingglass").font(.caption) }
-            HStack {
-                Button(project.rootPath.isEmpty ? "Вибрати папку…" : "Змінити…") { project.chooseFolder() }.glassButton(prominent: project.rootPath.isEmpty)
-                if !project.rootPath.isEmpty {
-                    Button("Оновити") { Task { await project.refresh() } }.glassButton().disabled(project.busy)
-                    Button("Від’єднати", role: .destructive) { project.connect("") }.glassButton()
+        VStack(alignment: .leading, spacing: UI.inner) {
+            Text("Контекст для питань про код").font(.headline)
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Папка проєкту", systemImage: "folder").font(.subheadline.weight(.semibold))
+                Text(project.rootPath.isEmpty ? "Не підключено" : project.rootPath + " · " + project.status).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                HStack {
+                    Button(project.rootPath.isEmpty ? "Вибрати папку…" : "Змінити…") { project.chooseFolder() }.glassButton(prominent: project.rootPath.isEmpty)
+                    if !project.rootPath.isEmpty {
+                        Button("Оновити") { Task { await project.refresh() } }.glassButton().disabled(project.busy)
+                        Button("Від’єднати", role: .destructive) { project.connect("") }.glassButton()
+                    }
                 }
+            }
+            Divider()
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Відкритий файл у JetBrains", systemImage: "chevron.left.forwardslash.chevron.right").font(.subheadline.weight(.semibold))
+                Text(editor.status).font(.caption).foregroundStyle(.secondary)
+                if !AXIsProcessTrusted() { Button("Дати дозвіл Accessibility") { editor.enable() }.glassButton(prominent: true) }
+                else { Toggle("Читати точний текст редактора", isOn: Binding(get: { editor.enabled }, set: { if $0 { editor.enable() } else { editor.disable() } })) }
+            }
+            Divider()
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Вікно на екрані", systemImage: "macwindow").font(.subheadline.weight(.semibold))
+                Toggle("Робити знімок вікна JetBrains для питань про код", isOn: $model.settings.claudeSendScreenshots)
+                Text(screen.sourceName + " · " + screen.status).font(.caption).foregroundStyle(.secondary)
+                if PermissionsManager.screenStatus != "Allowed" { Button("Дати дозвіл на запис екрана") { PermissionsManager.openPrivacy("Privacy_ScreenCapture") }.glassButton(prominent: true) }
             }
         }
     }
@@ -415,7 +436,7 @@ struct CaptureSourceView: View {
                 }
                 GridRow {
                     Text("Терміни").foregroundStyle(.secondary)
-                    Picker("", selection: $model.settings.vocabularyProfile) { ForEach(SpeechVocabulary.profiles, id: \.self) { Text($0).tag($0) } }.labelsHidden()
+                    Picker("", selection: $model.settings.vocabularyProfile) { ForEach(SpeechVocabulary.profiles, id: \.self) { Text(SpeechVocabulary.label($0)).tag($0) } }.labelsHidden()
                 }
             }.disabled(locked || model.diagnostics.testing)
             Toggle("Записувати й мій мікрофон у режимі «Обидва»", isOn: $model.settings.captureMyVoice).disabled(locked)

@@ -3,7 +3,7 @@ import Foundation
 public enum AudioMode: String, CaseIterable, Codable, Sendable { case system = "System Audio", microphone = "Microphone", both = "Both" }
 public enum ListeningProfile: String, CaseIterable, Codable, Sendable { case online = "Онлайн", classroom = "Аудиторія", custom = "Власний" }
 public struct CopilotSettings: Codable, Equatable, Sendable {
-    public var schemaVersion = 8
+    public var schemaVersion = 9
     public var autoLoadWhisper = true
     public var audioBackend = "Core Audio Tap"
     public var audioMode: AudioMode = .system
@@ -19,7 +19,7 @@ public struct CopilotSettings: Codable, Equatable, Sendable {
         }
     }
     public var captureMyVoice = false
-    public var vocabularyProfile = "JavaScript"
+    public var vocabularyProfile = "General"
     public var customVocabulary = ""
     public var effectiveAudioMode: AudioMode { audioMode == .both && !captureMyVoice ? .system : audioMode }
     public var speechVocabulary: String { SpeechVocabulary.text(profile: vocabularyProfile, custom: customVocabulary) }
@@ -43,7 +43,7 @@ public struct CopilotSettings: Codable, Equatable, Sendable {
     public var backgroundBackend = "claude"
     public var claudeModel = "claude-haiku-5-5"
     public var claudeDailyLimitUSD = 1.0
-    public var claudeSendScreenshots = false
+    public var claudeSendScreenshots = true
     public var modelPath = ""
     public var silenceSeconds = 0.85
     public var chunkSeconds = 6.0
@@ -110,6 +110,10 @@ public struct SettingsManager: Sendable {
         if (saved["schemaVersion"] as? Int ?? 1) < 8 {
             if saved["systemPrompt"] as? String == CopilotSettings.promptV7 { saved["systemPrompt"] = CopilotSettings.developerPrompt }
             saved["schemaVersion"] = 8
+        }
+        if (saved["schemaVersion"] as? Int ?? 1) < 9 {
+            saved["claudeSendScreenshots"] = true
+            saved["schemaVersion"] = 9
         }
         let merged = defaults.merging(saved) { _, saved in saved }
         return try JSONDecoder().decode(CopilotSettings.self, from: JSONSerialization.data(withJSONObject: merged))

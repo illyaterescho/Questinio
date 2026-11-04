@@ -7,7 +7,8 @@ import LocalCopilotCore
 struct CodeWindow: Identifiable, Hashable { let id: UInt32; let title: String }
 @MainActor final class ScreenContextService: ObservableObject {
     @Published var windows: [CodeWindow] = []
-    @Published var selectedWindow: UInt32 = 0 { didSet { clearSnapshot(); region = nil; displayID = nil } }
+    @Published var selectedWindow: UInt32 = 0 { didSet { clearSnapshot(); region = nil; displayID = nil; autoSelected = false } }
+    private var autoSelected = false
     @Published var enabled = true
     @Published var automatic = false { didSet { configureTimer() } }
     @Published var useImage = true
@@ -78,6 +79,21 @@ struct CodeWindow: Identifiable, Hashable { let id: UInt32; let title: String }
         panel.contentView = view; selectionPanel = panel; panel.makeKeyAndOrderFront(nil); panel.makeFirstResponder(view)
     }
     var hasSource: Bool { selectedWindow != 0 || region != nil }
+    /// With no window picked by hand, follow the open JetBrains window. A manual choice always wins.
+    func ensureIDEWindow() async {
+        guard !hasSource || autoSelected else { return }
+        guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false) else {
+            status = "Немає дозволу на запис екрана"; return
+        }
+        let candidates = content.windows.filter { JetBrainsIDE.matches($0.owningApplication?.bundleIdentifier) && $0.windowLayer == 0 && $0.frame.width > 300 && $0.frame.height > 200 }
+        let best = candidates.max { ($0.isOnScreen ? 1 : 0, $0.frame.width * $0.frame.height) < ($1.isOnScreen ? 1 : 0, $1.frame.width * $1.frame.height) }
+        guard let best else {
+            if autoSelected { selectedWindow = 0 }
+            status = "Вікно JetBrains не знайдено"; return
+        }
+        if selectedWindow != best.windowID { selectedWindow = best.windowID }
+        autoSelected = true
+    }
     func refreshForAnswer() async {
         while busy {
             do { try await Task.sleep(for: .milliseconds(100)) } catch { return }

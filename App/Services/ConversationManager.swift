@@ -283,14 +283,16 @@ import LocalCopilotCore
         do { applications = try await SystemAudioManager.applications(backend: settings.audioBackend) }
         catch { self.error = error.localizedDescription; diagnostics.log("Source discovery failed: \(error.localizedDescription)") }
     }
-    func refreshModels() async {
-        guard needsLocalModel else { warmingModel = ""; ollamaStatus = "Ready · Claude"; return }
+    // Ollama starts only when asked to (launch: true), never with the app.
+    func refreshModels(launch: Bool = false) async {
+        guard needsLocalModel || launch else { warmingModel = ""; ollamaStatus = "Ready · Claude"; return }
         guard !refreshingModels else { return }
         refreshingModels = true; lastModelRetry = Date()
         defer { refreshingModels = false }
         do { models = try await ollama.models() }
         catch {
             models = []; warmingModel = ""
+            guard launch else { ollamaStatus = "Offline · Ollama не запущена"; return }
             guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.electron.ollama") else {
                 ollamaStatus = "Ollama not installed"; self.error = "Install Ollama.app once to use local models."; return
             }
@@ -593,10 +595,14 @@ import LocalCopilotCore
                 }
                 // A chart cannot be answered from source text: always look at the screen for it.
                 let visual = VisualQuestionRouter.isVisual(input)
-                if visual && self.screen.enabled && self.screen.hasSource {
-                    await self.screen.refreshForAnswer()
+                let seeScreen = useCode && snapshot.claudeSendScreenshots
+                if (visual || seeScreen) && self.screen.enabled {
+                    await self.screen.ensureIDEWindow()
+                    if self.screen.hasSource { await self.screen.refreshForAnswer() }
                     guard self.generationID == id, !Task.isCancelled else { return }
                 }
+                // The folder is rescanned on a timer only while recording.
+                if useCode && !self.running { await self.project.refresh() }
                 let retrievalStart = Date()
                 var retrieved = !useCode || self.project.rootPath.isEmpty ? nil : self.project.context(question: input, source: self.screen.enabled ? self.screen.sourceName : "", visible: self.screen.enabled ? self.screen.codeText : "", editor: editorSnapshot)
                 if useCode && retrieved?.context.isEmpty != false && self.screen.enabled && self.screen.automatic {
@@ -623,13 +629,14 @@ import LocalCopilotCore
                 var images: [String] = []
                 // Exact source text needs no visual embedding, except for visual questions.
                 // Otherwise vision remains a fallback when no project is connected.
-                if ((useCode && retrieved == nil) || visual) && self.screen.enabled && self.screen.useImage, let data = self.screen.imageData {
+                if ((useCode && retrieved == nil) || visual || seeScreen) && self.screen.enabled && self.screen.useImage, let data = self.screen.imageData {
                     if useClaude {
                         if snapshot.claudeSendScreenshots && data.count < 3_700_000 { images = [data.base64EncodedString()] }
                         else { self.diagnostics.log("Screenshot not sent to Claude: disabled or larger than the API limit") }
                     } else if try await ollama.supportsVision(model: snapshot.model) { images = [data.base64EncodedString()] }
                     else { self.diagnostics.log("Selected model has no Vision; using OCR text only") }
                 }
+                if seeScreen && !images.isEmpty { groundedQuestion += "\nДодано знімок відкритого вікна IDE. Для точних рядків і назв спирайся на наведений текст файла, якщо він є." }
                 if visual && images.isEmpty { groundedQuestion += "\nЗображення екрана недоступне: не описуй графік чи діаграму за здогадом." }
                 let prompt = snapshot.systemPrompt + (useCode
                     ? "\nДля питання про код спирайся на наведений файл і точні рядки. «Тут» означає позицію редактора. Дослівно зберігай умови, `return`, назви змінних і ключі. Якщо питають де реалізовано, назви файл, метод і рядок. Якщо файла для номера рядка немає, коротко уточни. Не вигадуй код."

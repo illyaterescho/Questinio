@@ -2,6 +2,9 @@ import Foundation
 
 public enum SpeechVocabulary {
     public static let profiles = ["General", "Mathematics", "JavaScript", "Python", "SQL"]
+    public static func label(_ profile: String) -> String {
+        switch profile { case "General": "Програмування"; case "Mathematics": "Математика"; default: profile }
+    }
     public static func text(profile: String, custom: String) -> String {
         let terms: String
         switch profile {
@@ -9,7 +12,7 @@ public enum SpeechVocabulary {
         case "JavaScript": terms = "JavaScript, TypeScript, Promise, async/await, callback, closure, event loop, React, Node.js, null, undefined, NaN, race condition, рейс кондишн, уникати, статична типізація, динамічна типізація."
         case "Python": terms = "Python, asyncio, coroutine, generator, decorator, GIL, list, tuple, dictionary, type hints, статична типізація, динамічна типізація."
         case "SQL": terms = "SQL, PostgreSQL, MySQL, SELECT, JOIN, GROUP BY, HAVING, index, transaction, ACID, isolation, deadlock, індекс, транзакція."
-        default: terms = "race condition, рейс кондишн, уникати, Promise, async/await, callback, JavaScript, TypeScript, статична типізація."
+        default: terms = "програмування, алгоритм, структура даних, масив, список, словник, хеш-таблиця, стек, черга, рекурсія, цикл, функція, метод, клас, об’єкт, інтерфейс, наслідування, поліморфізм, інкапсуляція, абстракція, ООП, патерн, компілятор, потік, асинхронність, race condition, рейс кондишн, API, REST, HTTP, JSON, база даних, SQL, транзакція, індекс, Git, Docker, Python, JavaScript, TypeScript, Java, C#, C++, Swift, Kotlin, Go, React, Angular, Node.js, Django, pandas, NumPy, null, exception, debug, статична типізація, динамічна типізація."
         }
         return String((terms + " " + custom).trimmingCharacters(in: .whitespacesAndNewlines).prefix(1500))
     }

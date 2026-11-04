@@ -30,7 +30,8 @@ Claude Haiku instead: then conversation text, code fragments and OCR go to Anthr
   Set it in the **AI model** chip of the command bar or in Settings → AI Models.
 - **Code context**: connect a project folder; relevant fragments with exact line
   numbers are sent with code questions ("what does line 129 do?", "where is X
-  defined?"). Optional JetBrains editor reading via Accessibility.
+  defined?"). Any JetBrains IDE: exact editor text via Accessibility and, for code
+  questions, a screenshot of its window.
 - **Rendering**: Markdown, code and LaTeX via bundled marked + DOMPurify + KaTeX.
 - **History**: SQLite + JSONL session journal, export and restore.
 

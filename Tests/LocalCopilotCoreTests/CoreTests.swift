@@ -318,6 +318,26 @@ final class CoreTests: XCTestCase {
         XCTAssertFalse(CodeQuestionRouter.needsCode("Що таке кореляція?"))
         XCTAssertFalse(CodeQuestionRouter.needsCode("Яка кореляція між ознаками?"))
     }
+    func testGeneralVocabularyCoversProgrammingNotOnlyJavaScript() {
+        XCTAssertEqual(CopilotSettings().vocabularyProfile, "General")
+        let terms = SpeechVocabulary.text(profile: "General", custom: "")
+        for term in ["Python", "Java", "C++", "Docker", "рекурсія", "поліморфізм", "race condition"] { XCTAssertTrue(terms.contains(term), term) }
+        XCTAssertLessThan(terms.count, 800) // leaves room for project terms in the speech prompt
+        XCTAssertEqual(SpeechVocabulary.label("General"), "Програмування")
+    }
+    func testOpenEditorPhrasesRouteToCode() {
+        for question in ["А що тут відбувається?", "Що робить цей клас?", "Що в цьому файлі?", "Навіщо цей цикл?"] { XCTAssertTrue(CodeQuestionRouter.needsCode(question), question) }
+    }
+    func testV8SettingsEnableIDEScreenshots() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let store = SettingsManager(url: directory.appendingPathComponent("settings.json"))
+        try JSONSerialization.data(withJSONObject: ["schemaVersion": 8, "claudeSendScreenshots": false]).write(to: store.url)
+        XCTAssertTrue(try store.load().claudeSendScreenshots)
+        var settings = try store.load(); settings.claudeSendScreenshots = false; try store.save(settings)
+        XCTAssertFalse(try store.load().claudeSendScreenshots) // later opt-out sticks
+    }
     func testVisualQuestionsAreDetected() {
         for question in ["Що показує цей графік?", "Чому діаграма така?", "Опишіть гістограму", "Куди йде крива?", "Що це за лінія?", "Якого кольору стовпці?", "Що на осі X?", "Що в легенді?"] {
             XCTAssertTrue(VisualQuestionRouter.isVisual(question), question)
@@ -339,7 +359,7 @@ final class CoreTests: XCTestCase {
         let store = SettingsManager(url: directory.appendingPathComponent("settings.json"))
         try JSONSerialization.data(withJSONObject: ["schemaVersion": 7, "systemPrompt": CopilotSettings.promptV7]).write(to: store.url)
         XCTAssertEqual(try store.load().systemPrompt, CopilotSettings.developerPrompt)
-        XCTAssertEqual(try store.load().schemaVersion, 8)
+        XCTAssertEqual(try store.load().schemaVersion, 9)
         try JSONSerialization.data(withJSONObject: ["schemaVersion": 7, "systemPrompt": "Мій промпт"]).write(to: store.url)
         XCTAssertEqual(try store.load().systemPrompt, "Мій промпт")
     }
@@ -373,7 +393,7 @@ final class CoreTests: XCTestCase {
     func testClaudeDefaultsUseHaikuAndNoKeyInSettings() throws {
         let settings = CopilotSettings()
         XCTAssertEqual(settings.answerBackend, "claude"); XCTAssertEqual(settings.backgroundBackend, "claude")
-        XCTAssertEqual(settings.claudeModel, "claude-haiku-5-5"); XCTAssertFalse(settings.claudeSendScreenshots)
+        XCTAssertEqual(settings.claudeModel, "claude-haiku-5-5"); XCTAssertTrue(settings.claudeSendScreenshots)
         let json = String(decoding: try JSONEncoder().encode(settings), as: UTF8.self)
         XCTAssertFalse(json.lowercased().contains("apikey")); XCTAssertFalse(json.contains("sk-ant"))
     }
@@ -492,7 +512,7 @@ final class CoreTests: XCTestCase {
         for prompt in [CopilotSettings.legacyDeveloperPrompt, "My custom concise prompt"] {
             try JSONSerialization.data(withJSONObject: ["schemaVersion": 2, "systemPrompt": prompt, "applicationID": "com.apple.QuickTimePlayerX", "microphoneID": 100, "maxTokens": -1]).write(to: store.url)
             let result = try store.load()
-            XCTAssertEqual(result.schemaVersion, 8)
+            XCTAssertEqual(result.schemaVersion, 9)
             XCTAssertEqual(result.systemPrompt, prompt == CopilotSettings.legacyDeveloperPrompt ? CopilotSettings.developerPrompt : prompt)
             XCTAssertEqual(result.applicationID, "com.apple.QuickTimePlayerX"); XCTAssertEqual(result.microphoneID, 100); XCTAssertEqual(result.maxTokens, -1)
         }
@@ -505,7 +525,7 @@ final class CoreTests: XCTestCase {
         for prompt in [CopilotSettings.legacyConcisePrompt, "My custom prompt v3"] {
             try JSONSerialization.data(withJSONObject: ["schemaVersion": 3, "systemPrompt": prompt]).write(to: store.url)
             let result = try store.load()
-            XCTAssertEqual(result.schemaVersion, 8)
+            XCTAssertEqual(result.schemaVersion, 9)
             XCTAssertEqual(result.systemPrompt, prompt == CopilotSettings.legacyConcisePrompt ? CopilotSettings.developerPrompt : prompt)
         }
     }
@@ -516,7 +536,7 @@ final class CoreTests: XCTestCase {
         let store = SettingsManager(url: directory.appendingPathComponent("settings.json"))
         try JSONSerialization.data(withJSONObject: ["schemaVersion": 5, "autoLoadWhisper": false, "whisperVariant": "openai_whisper-small", "modelPath": "/tmp/openai_whisper-large-v3-v20240930_turbo", "model": "qwen3.5:9b"]).write(to: store.url)
         let result = try store.load()
-        XCTAssertEqual(result.schemaVersion, 8)
+        XCTAssertEqual(result.schemaVersion, 9)
         XCTAssertTrue(result.autoLoadWhisper)
         XCTAssertEqual(result.whisperVariant, "openai_whisper-large-v3-v20240930_turbo")
         XCTAssertEqual(result.model, "qwen3.5:9b")
