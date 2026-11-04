@@ -491,6 +491,10 @@ final class CoreTests: XCTestCase {
         XCTAssertLessThanOrEqual(result.context.count, 4800)
         XCTAssertTrue(result.context.contains("Class1 ") && result.context.contains("Class30 "))
     }
+    func testCodeAuthorRuleStaysOutOfTheGeneralPrompt() {
+        XCTAssertTrue(CopilotSettings.codeAuthorRule.contains("від першої особи"))
+        XCTAssertFalse(CopilotSettings.developerPrompt.contains(CopilotSettings.codeAuthorRule))
+    }
     func testListenOnLaunchIsOptInAndPersists() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

@@ -676,7 +676,7 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
                 if seeScreen && !images.isEmpty { groundedQuestion += "\nДодано знімок відкритого вікна IDE. Для точних рядків і назв спирайся на наведений текст файла, якщо він є." }
                 if visual && images.isEmpty { groundedQuestion += "\nЗображення екрана недоступне: не описуй графік чи діаграму за здогадом." }
                 let prompt = snapshot.systemPrompt + (useCode
-                    ? "\nДля питання про код спирайся на наведений файл і точні рядки. «Тут» означає позицію редактора. Дослівно зберігай умови, `return`, назви змінних і ключі. Якщо питають де реалізовано, назви файл, метод і рядок. Якщо файла для номера рядка немає, коротко уточни. Не вигадуй код."
+                    ? "\n" + CopilotSettings.codeAuthorRule + "\nДля питання про код спирайся на наведений файл і точні рядки. «Тут» означає позицію редактора. Дослівно зберігай умови, `return`, назви змінних і ключі. Якщо питають де реалізовано, назви файл, метод і рядок. Якщо файла для номера рядка немає, коротко уточни. Не вигадуй код."
                     : "")
                 let focusedCode = useCode && (ProjectCodeIndex.namedSymbol(input) != nil || ProjectCodeIndex.requestedLine(input) != nil || ProjectCodeIndex.refersToCurrentCode(input))
                 let contextBudget = min(snapshot.contextCharacters, snapshot.contextTokens * 2, useCode ? (focusedCode ? 4200 : 6000) : 4000)
