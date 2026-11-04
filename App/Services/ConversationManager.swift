@@ -117,6 +117,14 @@ import LocalCopilotCore
         do { try claude.keychain.delete(); claudeKeyStored = false; Task { await refreshModels() } }
         catch { self.error = error.localizedDescription }
     }
+    // “Auto” means listening and answering on its own. Turning it off keeps listening
+    // but answers only on click; the record button stops listening.
+    var autoListening: Bool { settings.automatic && running }
+    func toggleAutoListening() {
+        if autoListening { settings.automatic = false; return }
+        settings.automatic = true
+        if !running { Task { await start() } }
+    }
     func refreshClaudeSpend() async { claudeSpentToday = await claude.spend.spentToday() }
     private let settingsStore: SettingsManager
     private let storage: StorageManager?
@@ -172,7 +180,10 @@ import LocalCopilotCore
         refreshMicrophones()
         claudeKeyStored = (try? claude.keychain.read())?.isEmpty == false
         Task { await refreshClaudeSpend(); await refreshModels(); await refreshHistory(); await refreshApplications() }
-        Task { await loadModel() }
+        Task {
+            await loadModel()
+            if settings.listenOnLaunch { await start() }
+        }
         dialogueTask = Task { [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .milliseconds(300)) } catch { return }

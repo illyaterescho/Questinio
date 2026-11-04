@@ -16,7 +16,7 @@ struct SettingsView: View {
                 Form {
                     switch section {
                     case "General":
-                        Section("Questionio") { Toggle("Автоматично відповідати на завершені питання", isOn: $model.settings.automatic); Toggle("Зберігати діалоги й відповіді локально", isOn: $model.settings.saveHistory); Text("Запис починається лише кнопкою. Розпізнавання працює в RAM; при затримці аудіо тимчасово йде в приватний кеш і видаляється після обробки. Текст зберігається лише з увімкненою історією.").font(.caption).foregroundStyle(.secondary) }
+                        Section("Questionio") { Toggle("Автоматично відповідати на завершені питання", isOn: $model.settings.automatic); Toggle("Починати слухати при запуску застосунку", isOn: $model.settings.listenOnLaunch); Toggle("Зберігати діалоги й відповіді локально", isOn: $model.settings.saveHistory); Text("Запис починається лише кнопкою. Розпізнавання працює в RAM; при затримці аудіо тимчасово йде в приватний кеш і видаляється після обробки. Текст зберігається лише з увімкненою історією.").font(.caption).foregroundStyle(.secondary) }
                     case "Audio":
                         Section("Джерела") {
                             Picker("Рушій системного звуку", selection: $model.settings.audioBackend) { Text("Core Audio Tap · лише звук").tag("Core Audio Tap"); Text("ScreenCaptureKit").tag("ScreenCaptureKit") }

@@ -92,6 +92,14 @@ struct BarChip<Panel: View>: View {
         .popover(isPresented: $open, arrowEdge: .bottom) { panel.padding(16) }
     }
 }
+struct AutoListenToggle: View {
+    @ObservedObject var model: ConversationManager
+    var body: some View {
+        BarToggle(title: "Авто", symbol: "bolt.fill", isOn: Binding(get: { model.autoListening }, set: { _ in model.toggleAutoListening() }),
+                  help: model.autoListening ? "Слухає й відповідає сам. Натисніть, щоб відповідати лише за кліком" : "Почати слухати й автоматично відповідати на питання")
+            .disabled(model.starting || model.stopping || model.modelBusy)
+    }
+}
 struct MiniMeter: View {
     let level: Float
     var body: some View {
@@ -168,7 +176,7 @@ struct LiveView: View {
             if !warnings.isEmpty {
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).frame(width: UI.control, height: UI.control).help(warnings.joined(separator: "\n"))
             }
-            BarToggle(title: "Авто", symbol: "bolt.fill", isOn: $model.settings.automatic, help: "Автоматично відповідати на завершені питання")
+            AutoListenToggle(model: model)
         }.padding(6).frame(height: UI.bar).glass(Capsule())
         .frame(maxWidth: .infinity)
     }
@@ -332,7 +340,7 @@ struct FloatingView: View {
     @State private var showSource = false
     private var latest: String {
         if let entry = model.questionInbox.entries.last { return entry.text }
-        return model.running ? "Слухаю…" : "Натисніть запис або ⌃⌥⌘R"
+        return model.running ? "Слухаю…" : "Увімкніть «Авто» або запис"
     }
     var body: some View {
         VStack(spacing: UI.inner) {
@@ -342,6 +350,7 @@ struct FloatingView: View {
                 Text(latest).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.head).frame(maxWidth: .infinity, alignment: .leading)
                     .foregroundStyle(model.questionInbox.entries.isEmpty ? .secondary : .primary).help(latest).padding(.leading, 4)
                 QuestionInboxView(model: model, compact: true).fixedSize()
+                AutoListenToggle(model: model)
                 AccentButton(title: "Відповісти") { model.generateManual() }.disabled(model.generating).help("Відповісти на останнє питання (⌃⌥⌘G)")
                 IconButton(symbol: "slider.horizontal.3", help: "Джерело звуку") { showSource.toggle() }
                     .popover(isPresented: $showSource) { CaptureSourceView(model: model).frame(width: 420).padding(16) }
@@ -357,7 +366,7 @@ struct FloatingView: View {
             }.padding(.leading, 16).padding(.trailing, 6).frame(height: 40).glass(Capsule(), interactive: true)
             if !model.error.isEmpty { Label(model.error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange).lineLimit(2).help(model.error).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8) }
             Spacer(minLength: 0)
-        }.padding(.horizontal, UI.inner).padding(.top, 28).padding(.bottom, UI.inner).frame(minWidth: 400, minHeight: 120)
+        }.padding(.horizontal, UI.inner).padding(.top, 28).padding(.bottom, UI.inner).frame(minWidth: 500, minHeight: 120)
         .animation(.snappy, value: model.answer.isEmpty && !model.generating)
         .ignoresSafeArea().appColorScheme(model.settings.appearance)
     }
@@ -440,6 +449,7 @@ struct CaptureSourceView: View {
                 }
             }.disabled(locked || model.diagnostics.testing)
             Toggle("Записувати й мій мікрофон у режимі «Обидва»", isOn: $model.settings.captureMyVoice).disabled(locked)
+            Toggle("Починати слухати при запуску застосунку", isOn: $model.settings.listenOnLaunch)
             Divider()
             VStack(alignment: .leading, spacing: 4) {
                 Label(model.running ? model.captureSourceName : model.configuredSourceName, systemImage: "app.badge")

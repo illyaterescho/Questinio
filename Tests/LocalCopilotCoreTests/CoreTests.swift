@@ -338,6 +338,16 @@ final class CoreTests: XCTestCase {
         var settings = try store.load(); settings.claudeSendScreenshots = false; try store.save(settings)
         XCTAssertFalse(try store.load().claudeSendScreenshots) // later opt-out sticks
     }
+    func testListenOnLaunchIsOptInAndPersists() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let store = SettingsManager(url: directory.appendingPathComponent("settings.json"))
+        try JSONSerialization.data(withJSONObject: ["schemaVersion": 9]).write(to: store.url)
+        XCTAssertFalse(try store.load().listenOnLaunch)
+        var settings = try store.load(); settings.listenOnLaunch = true; try store.save(settings)
+        XCTAssertTrue(try store.load().listenOnLaunch)
+    }
     func testVisualQuestionsAreDetected() {
         for question in ["Що показує цей графік?", "Чому діаграма така?", "Опишіть гістограму", "Куди йде крива?", "Що це за лінія?", "Якого кольору стовпці?", "Що на осі X?", "Що в легенді?"] {
             XCTAssertTrue(VisualQuestionRouter.isVisual(question), question)

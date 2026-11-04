@@ -88,7 +88,7 @@ final class CopilotPanel: NSPanel {
             // Transparent window so the Liquid Glass panel refracts the desktop behind it.
             panel.titlebarAppearsTransparent = true; panel.titleVisibility = .hidden; panel.isOpaque = false; panel.backgroundColor = .clear; panel.isMovableByWindowBackground = true
             panel.contentView = NSHostingView(rootView: FloatingView(model: model))
-            panel.minSize = NSSize(width: 400, height: 140); panel.setFrameAutosaveName("QuestionioFloating")
+            panel.minSize = NSSize(width: 500, height: 140); panel.setFrameAutosaveName("QuestionioFloating")
             self.panel = panel
         }
         applyPreferences(); panel?.makeKeyAndOrderFront(nil)

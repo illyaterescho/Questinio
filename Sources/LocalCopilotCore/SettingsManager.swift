@@ -24,6 +24,7 @@ public struct CopilotSettings: Codable, Equatable, Sendable {
     public var effectiveAudioMode: AudioMode { audioMode == .both && !captureMyVoice ? .system : audioMode }
     public var speechVocabulary: String { SpeechVocabulary.text(profile: vocabularyProfile, custom: customVocabulary) }
     public var automatic = true
+    public var listenOnLaunch = false
     public var answerFromMicrophone = false
     public var model = "qwen3.5:9b"
     public var projectFolder = ""
