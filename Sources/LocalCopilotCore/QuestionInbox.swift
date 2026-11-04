@@ -143,10 +143,8 @@ public struct QuestionInbox: Sendable {
         case .question, .replace:
             guard !QuestionDetectionService.isComparativeStatement(text) else { return }
             let id = currentID ?? insert(TechnicalQuestionNormalizer.normalize(text), source: source, context: context, date: date, final: true, state: .draft)
+            // Only a spoken cue, handled in observe, replaces a question. The model's guess must not lose one.
             utterances[utterance] = id
-            if decision.action == .replace, let previous, let current = entries.firstIndex(where: { $0.id == id }), previous != current {
-                entries[previous].state = .superseded; entries[current].supersedes = entries[previous].id
-            }
         case .continuation:
             guard continuationBase[utterance] == nil, Self.replacementCue(text) == nil, let previous else { return }
             if let currentID, let current = entries.firstIndex(where: { $0.id == currentID }) {
@@ -234,7 +232,7 @@ public struct DialogueIntentDecision: Decodable, Sendable {
             switch self {
             case .question: return "Виділено нове питання"
             case .continuation: return "Питання доповнено продовженням репліки"
-            case .replace: return "Попереднє питання переформульовано"
+            case .replace: return "Виділено нове питання"
             case .abandon: return "Попереднє питання перервано"
             case .statement: return "Опис або відповідь · контекст оновлено"
             }

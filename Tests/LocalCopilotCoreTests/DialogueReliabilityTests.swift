@@ -61,6 +61,72 @@ final class DialogueReliabilityTests: XCTestCase {
         }
         XCTAssertTrue(QuestionDetectionService.isQuestion(distanceExplanation + " Чому так відбувається?"))
     }
+    func testEveryQuestionAskedDuringAnAnswerWaitsItsTurn() {
+        var queue = AnswerQueue(); let t = Date()
+        for text in ["Перше?", "Друге?", "Третє?"] { queue.add(AnswerQueue.Item(text: text, context: nil, before: t, entryID: UUID(), automatic: true)) }
+        var answered: [String] = []
+        while let item = queue.next(isCurrent: { _, _ in true }) { answered.append(item.text) }
+        XCTAssertEqual(answered, ["Перше?", "Друге?", "Третє?"])
+    }
+    func testQueueSkipsOnlyAutomaticQuestionsTheSpeakerChanged() {
+        var queue = AnswerQueue(); let t = Date(); let changed = UUID(), chosen = UUID()
+        queue.add(AnswerQueue.Item(text: "Змінене?", context: nil, before: t, entryID: changed, automatic: true))
+        queue.add(AnswerQueue.Item(text: "Вибране вручну?", context: nil, before: t, entryID: chosen))
+        XCTAssertEqual(queue.next(isCurrent: { _, _ in false })?.text, "Вибране вручну?")
+        XCTAssertNil(queue.next(isCurrent: { _, _ in false }))
+    }
+    func testNewerRevisionKeepsItsPlaceAndRepeatsAreNotQueued() {
+        var queue = AnswerQueue(); let t = Date(); let first = UUID()
+        queue.add(AnswerQueue.Item(text: "Перше", context: nil, before: t, entryID: first, automatic: true))
+        queue.add(AnswerQueue.Item(text: "Друге?", context: nil, before: t))
+        queue.add(AnswerQueue.Item(text: "Друге?", context: nil, before: t))
+        queue.add(AnswerQueue.Item(text: "Перше питання?", context: nil, before: t, entryID: first, revision: 1, automatic: true))
+        XCTAssertEqual(queue.items.map(\.text), ["Перше питання?", "Друге?"])
+    }
+    func testPreviousAnswerStaysReachableWhileTheNextOneStreams() {
+        var log = AnswerLog()
+        log.add(question: "Перше?", answer: "Відповідь 1")
+        XCTAssertEqual(log.pageCount(liveIsLogged: false), 2) // the second answer is streaming
+        XCTAssertNil(log.shownTurn)
+        log.move(by: -1, liveIsLogged: false)
+        XCTAssertEqual(log.shownTurn?.answer, "Відповідь 1")
+        log.add(question: "Друге?", answer: "Відповідь 2") // finishing does not move the reader away
+        XCTAssertEqual(log.shownTurn?.answer, "Відповідь 1")
+        log.move(by: 1, liveIsLogged: true)
+        XCTAssertNil(log.shownTurn)
+        log.move(by: 1, liveIsLogged: true) // already at the end
+        XCTAssertNil(log.shownTurn)
+        XCTAssertEqual(log.page(liveIsLogged: true), 1)
+    }
+    func testAnswerLogKeepsShownTurnWhenOldTurnsAreDropped() {
+        var log = AnswerLog()
+        for i in 0..<50 { log.add(question: "\(i)", answer: "\(i)") }
+        log.move(by: -2, liveIsLogged: true)
+        let seen = log.shownTurn
+        log.add(question: "50", answer: "50")
+        XCTAssertEqual(log.turns.count, 50)
+        XCTAssertEqual(log.shownTurn, seen)
+    }
+    func testTwoQuestionsInARowBothReachTheAnswerQueue() {
+        var inbox = QuestionInbox(); let t = Date(); let context = SessionContext()
+        inbox.observe("Що таке проміс?", source: teacher, utterance: UUID(), final: true, context: context, at: t)
+        inbox.observe("Що таке замикання?", source: teacher, utterance: UUID(), final: true, context: context, at: t.addingTimeInterval(1))
+        let ready = inbox.settle(at: t.addingTimeInterval(4))
+        XCTAssertEqual(ready.map(\.text), ["Що таке проміс?", "Що таке замикання?"])
+        XCTAssertTrue(ready.allSatisfy { inbox.isCurrent($0.id, revision: $0.revision) })
+    }
+    func testModelGuessCannotDropTheFirstQuestion() throws {
+        var inbox = QuestionInbox(); let t = Date(); let context = SessionContext(); let utterance = UUID()
+        inbox.observe("Що таке проміс?", source: teacher, utterance: UUID(), final: true, context: context, at: t)
+        let first = inbox.settle(at: t.addingTimeInterval(2))[0]
+        inbox.observe("Що таке замикання?", source: teacher, utterance: utterance, final: true, context: context, at: t.addingTimeInterval(3))
+        let decision = try DialogueIntentDecision.parse(#"{"action":"replace","evidence":"замикання"}"#)
+        inbox.applyIntent(decision, text: "Що таке замикання?", source: teacher, utterance: utterance, context: context, at: t.addingTimeInterval(3))
+        XCTAssertTrue(inbox.isCurrent(first.id, revision: first.revision))
+    }
+    func testDefaultPromptAsksToAnswerEveryQuestionInAPhrase() {
+        XCTAssertTrue(CopilotSettings.developerPrompt.contains("відповідай на кожне"))
+    }
     func testManualQuestionDoesNotTriggerAnotherAutomaticAnswer() {
         var inbox = QuestionInbox(); let t = Date()
         inbox.append("Що означає ексцес?", source: "Введено вручну", context: SessionContext(), at: t)

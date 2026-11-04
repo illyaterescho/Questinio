@@ -7,7 +7,8 @@ It transcribes a call or your microphone on-device, detects questions, and
 streams answers from a local LLM, optionally grounded in a code folder you pick.
 Free and fully local by default. Add your own Anthropic API key to answer with
 Claude Haiku instead: then conversation text, code fragments and OCR go to Anthropic
-(screenshots only if you enable them; audio always stays on the Mac).
+(screenshots only if you enable them, and never for automatic answers; audio always
+stays on the Mac).
 
 > Source folder, Xcode scheme and Swift module still use the old name
 > `LocalCopilot` for compatibility.
@@ -25,12 +26,14 @@ Claude Haiku instead: then conversation text, code fragments and OCR go to Anthr
 - **Question inbox**: detects finished questions after a pause, keeps the
   conversation context at the moment each question was asked, tracks
   interrupted or rephrased questions.
+- **Nothing gets lost**: a question asked during an answer waits in a queue, and earlier
+  answers stay one click away.
 - **Answers**: local Ollama (`/api/chat`, streaming), or Claude Haiku 5.5 with your
   own key. The key is stored only in the macOS Keychain; a daily spend limit applies.
   Set it in the **AI model** chip of the command bar or in Settings → AI Models.
 - **Code context**: connect a project folder; relevant fragments with exact line
   numbers are sent with code questions ("what does line 129 do?", "where is X
-  defined?"). Any JetBrains IDE: exact editor text via Accessibility and, for code
+  defined?", "what did you do in lab 6?"). Any JetBrains IDE: exact editor text via Accessibility and, for code
   questions, a screenshot of its window.
 - **Rendering**: Markdown, code and LaTeX via bundled marked + DOMPurify + KaTeX.
 - **History**: SQLite + JSONL session journal, export and restore.

@@ -9,7 +9,9 @@ public enum CodeQuestionRouter {
         if ProjectCodeIndex.requestedLine(value) != nil { return true }
         if normalized.range(of: #"\b[a-z_][A-Za-z0-9_]*[A-Z][A-Za-z0-9_]*\b|\b[a-z_][A-Za-z0-9_]*\s*\(|\b[\w-]+\.(?:ts|tsx|js|jsx|py|swift|java|html|css)\b"#, options: .regularExpression) != nil { return true }
         if ["у вас", "у вашому", "в вашому", "ваш код", "мій код", "в моєму", "в коді", "у коді", "в проєкті", "у проєкті", "в проекті", "у проекті", "в лабі", "у лабі", "в лаборатор", "у лаборатор", "в файлі", "у файлі", "на екрані", "у webstorm", "в webstorm", "де реаліз", "де визнач", "де знаход", "цей рядок", "цьому рядку", "рядок", "рядку", "строці", "строка", "строчку", "ця функція", "цю функцію", "цій функції", "цей метод", "цього методу", "ця змінна", "цю змінну", "ось тут", "ось це", "цей код", "що робить код", "що робить функц", "що робить метод", "покажи в коді", "знайди в коді", "в програмі", "у програмі", "де обчисл", "де розрах", "де вираху", "де береться", "де генер", "що виводить", "що виведе", "який результат", "скільки відхил", "що тут", "тут написано", "цей клас", "цьому класі", "цей файл", "цьому файлі", "цей цикл", "цьому циклі", "ця умова", "цей блок", "цей фрагмент", "відкритий файл", "відкритому файлі"].contains(where: value.contains) { return true }
-        if value.range(of: #"(?:^|\W)(?:lab[-_ ]*\d{1,2}|лаб[а-яі]*\s*\d{1,2})(?:\W|$)"#, options: .regularExpression) != nil { return true }
+        if ProjectCodeIndex.labNumber(value) != nil || value.range(of: #"(?:цій|цю|цієї)\s+лаб"#, options: .regularExpression) != nil { return true }
+        // “де використовується…”, “покажи де…”: asks for a place in the code even when no symbol is named.
+        if value.range(of: #"покажи\s+де|(?:^|\s)де\s.*(?:підключ|використ|юза|застосов|виклик|імпорт|написа|оголош)"#, options: .regularExpression) != nil { return true }
         if previousCodeQuestion && ["а чому", "чому", "а як", "а що", "і де", "а якщо", "а це", "тоді", "він", "вона", "воно", "це ", "тут", "там", "його", "її"].contains(where: value.hasPrefix) { return true }
         return false
     }
@@ -27,5 +29,19 @@ public enum JetBrainsIDE {
     public static func matches(_ bundleID: String?) -> Bool {
         guard let bundleID, bundleID.hasPrefix("com.jetbrains.") else { return false }
         return !bundleID.lowercased().hasPrefix("com.jetbrains.toolbox")
+    }
+}
+
+/// When a screenshot may be taken and when it may leave the Mac.
+/// An automatic answer is triggered by what someone else said, so it never sends the screen to the cloud.
+public enum ScreenshotPolicy {
+    public static func capturesForCodeQuestion(codeQuestion: Bool, allowed: Bool, cloud: Bool, automatic: Bool) -> Bool {
+        codeQuestion && allowed && !(cloud && automatic)
+    }
+    public static func capturesForVisualQuestion(visual: Bool, cloud: Bool, automatic: Bool) -> Bool {
+        visual && !(cloud && automatic)
+    }
+    public static func sendsImage(allowed: Bool, cloud: Bool, automatic: Bool) -> Bool {
+        !cloud || (allowed && !automatic)
     }
 }

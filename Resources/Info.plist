@@ -12,7 +12,7 @@
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSMicrophoneUsageDescription</key><string>Questionio transcribes your selected microphone locally. Audio is not saved or uploaded.</string>
-<key>NSScreenCaptureUsageDescription</key><string>Questionio uses ScreenCaptureKit to transcribe audio from your selected application locally. No screen images are stored.</string>
+<key>NSScreenCaptureUsageDescription</key><string>Questionio uses ScreenCaptureKit to transcribe audio from your selected application locally and to read a window or area for screen context. Screen images stay in memory and are not stored. They go to Anthropic only if you use Claude and allow screenshots.</string>
 <key>NSAudioCaptureUsageDescription</key><string>Questionio captures application audio for local speech recognition.</string>
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/><key>NSExceptionDomains</key><dict><key>127.0.0.1</key><dict><key>NSExceptionAllowsInsecureHTTPLoads</key><true/></dict></dict></dict>
 </dict></plist>

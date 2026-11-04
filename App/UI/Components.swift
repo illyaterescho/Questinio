@@ -1,4 +1,10 @@
 import SwiftUI
+/// Redraws only its own content when the audio levels change.
+struct LevelReader<Content: View>: View {
+    @ObservedObject var levels: AudioLevels
+    @ViewBuilder let content: (AudioLevels) -> Content
+    var body: some View { content(levels) }
+}
 
 // Shared visual language: Liquid Glass (macOS 26+) over a soft ambient backdrop,
 // with a material fallback on older systems.
@@ -194,17 +200,32 @@ struct AnswerCard: View {
                             HStack { Button("Скасувати") { model.cancelQuestionEdit() }.glassButton(); Spacer(); Button("Відповісти з виправленням") { model.retryEditedQuestion() }.glassButton(prominent: true) }
                         }.padding(16)
                     }
-                IconButton(symbol: "doc.on.doc", help: "Копіювати відповідь") { model.copyAnswer() }.disabled(model.answer.isEmpty)
+                IconButton(symbol: "doc.on.doc", help: "Копіювати відповідь") { model.copyAnswer() }.disabled(model.displayedAnswer.isEmpty)
             }
-            if !model.question.isEmpty {
-                Text(model.question).font(.callout.weight(.medium)).lineLimit(compact ? 3 : 5).textSelection(.enabled)
+            let live = model.liveAnswerIsLogged
+            let pages = model.answerLog.pageCount(liveIsLogged: live)
+            let page = model.answerLog.page(liveIsLogged: live)
+            if pages > 1 || !model.answerQueue.items.isEmpty {
+                HStack(spacing: 6) {
+                    if pages > 1 {
+                        IconButton(symbol: "chevron.left", help: "Попередня відповідь") { model.answerLog.move(by: -1, liveIsLogged: live) }.disabled(page == 0)
+                        Text("\(page + 1) / \(pages)").font(.caption).monospacedDigit()
+                        IconButton(symbol: "chevron.right", help: "Наступна відповідь") { model.answerLog.move(by: 1, liveIsLogged: live) }.disabled(page == pages - 1)
+                    }
+                    if model.answerLog.shownTurn?.interrupted == true { Text("перервано").font(.caption).foregroundStyle(.orange) }
+                    Spacer()
+                    if !model.answerQueue.items.isEmpty { Label("У черзі: \(model.answerQueue.items.count)", systemImage: "list.number").font(.caption).foregroundStyle(.secondary) }
+                }
+            }
+            if !model.displayedQuestion.isEmpty {
+                Text(model.displayedQuestion).font(.callout.weight(.medium)).lineLimit(compact ? 3 : 5).textSelection(.enabled)
                     .padding(UI.inner).frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
-            if model.answer.isEmpty && !model.generating {
+            if model.displayedAnswer.isEmpty && !model.generating {
                 EmptyState(symbol: "sparkles", title: "Відповідь з’явиться тут", hint: "Поставте питання внизу або натисніть на питання зі списку.")
             } else {
-                AnswerWebView(text: model.answer.isEmpty ? "Генерую локально…" : model.answer, streaming: model.generating).frame(minHeight: 90)
+                AnswerWebView(text: model.displayedAnswer.isEmpty ? (model.answersUseClaude ? "Генерую через Haiku 5.5…" : "Генерую локально…") : model.displayedAnswer, streaming: model.generating && model.answerLog.shown == nil).frame(minHeight: 90)
             }
             if !model.thinkingText.isEmpty { DisclosureGroup("Міркування моделі") { ScrollView { Text(model.thinkingText).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }.frame(maxHeight: 120) } }
             if model.answerTruncated { Label("Модель зупинилася на ліміті довжини · збільште контекст", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange) }

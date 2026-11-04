@@ -1,10 +1,18 @@
 import SwiftUI
 import AppKit
 import LocalCopilotCore
+/// Result of the capture test. It says nothing about a state it has not tested.
+enum GhostCheck: Equatable { case untested, hidden, visible }
+/// Meters change many times a second, so they live apart from the state the whole UI watches.
+@MainActor final class AudioLevels: ObservableObject {
+    @Published var mic: Float = 0
+    @Published var system: Float = 0
+}
 @MainActor final class ConversationManager: ObservableObject {
     @Published var settings: CopilotSettings {
         didSet {
             let modelChanged = settings.model != oldValue.model || settings.fastModel != oldValue.fastModel || settings.fastAnswers != oldValue.fastAnswers || settings.contextTokens != oldValue.contextTokens
+            if settings.privateWindow != oldValue.privateWindow { ghostCheck = .untested }
             persistSettings()
             if modelChanged || settings.answerBackend != oldValue.answerBackend || settings.backgroundBackend != oldValue.backgroundBackend { Task { await refreshModels() } }
             if settings.speechEngine != oldValue.speechEngine { Task { await loadModel() } }
@@ -39,8 +47,8 @@ import LocalCopilotCore
     @Published var ollamaStatus = "Checking…"
     @Published var micStatus = "Stopped"
     @Published var systemStatus = "Stopped"
-    @Published var micLevel: Float = 0
-    @Published var systemLevel: Float = 0
+    let levels = AudioLevels()
+    @Published var ghostCheck = GhostCheck.untested
     @Published var decodeSeconds = 0.0
     @Published var firstTokenSeconds: Double?
     @Published var answerTruncated = false
@@ -60,7 +68,8 @@ import LocalCopilotCore
     private var dialogueTask: Task<Void, Never>?
     private var semanticTask: Task<Void, Never>?
     private var semanticToken = UUID()
-    private var pendingDetectedQuestion: QuestionInbox.Entry?
+    @Published private(set) var answerQueue = AnswerQueue()
+    @Published var answerLog = AnswerLog()
     private var generatedQuestion: (id: UUID, revision: Int, automatic: Bool)?
     private var activeSeconds: TimeInterval = 0
     private var captureBegan: Date?
@@ -140,7 +149,6 @@ import LocalCopilotCore
     private var session = UUID()
     private var messages: [ChatMessage] = []
     private var latestUtterance = ""
-    private var pendingQuestion: String?
     private var generationID = UUID()
     private var contentParser = ThinkingStreamParser()
     private var generationStarted = Date()
@@ -432,7 +440,7 @@ import LocalCopilotCore
         if finalize { advanceDialogue(force: true) }
         await journalTask?.value
         scheduleMemoryCompression()
-        micLevel = 0; systemLevel = 0; micStatus = "Stopped"; systemStatus = "Stopped"
+        levels.mic = 0; levels.system = 0; micStatus = "Stopped"; systemStatus = "Stopped"
         pendingAudioSeconds = 0; droppedAudioFrames = capture.droppedFrames
         diagnostics.log("Capture stopped; dropped \(capture.droppedFrames) audio frames; \(finalize ? "pending speech decoded" : "pending speech discarded").")
     }
@@ -453,7 +461,7 @@ import LocalCopilotCore
             }
             if Date().timeIntervalSince(lastMeter[event.source] ?? .distantPast) > 0.08 {
                 lastMeter[event.source] = Date()
-                if event.source == .system { systemLevel = level } else { micLevel = level }
+                if event.source == .system { levels.system = level } else { levels.mic = level }
             }
         }
         if let update = event.update {
@@ -492,21 +500,34 @@ import LocalCopilotCore
         invalidateReplacedAutomaticAnswer()
         for entry in ready {
             guard settings.automatic, entry.source != "Мікрофон" || settings.answerFromMicrophone else { continue }
-            pendingDetectedQuestion = entry
+            submit(AnswerQueue.Item(text: entry.text, context: entry.context, before: entry.updated, entryID: entry.id, revision: entry.revision, automatic: true))
         }
-        if !generating, !questionEditing, let entry = pendingDetectedQuestion {
-            pendingDetectedQuestion = nil
-            guard questionInbox.isCurrent(entry.id, revision: entry.revision) else { return }
-            generate(entry.text, context: entry.context, before: entry.updated)
-            generatedQuestion = (entry.id, entry.revision, true)
-            autoAnswerStatus = "Завершене питання · генерується відповідь"
-        }
+        startNextQueuedAnswer()
     }
+    /// A question asked during an answer waits for it; nothing is cancelled to make room.
+    private func submit(_ item: AnswerQueue.Item) {
+        guard !(generating && item.text == question) else { return }
+        answerQueue.add(item)
+        if generating { autoAnswerStatus = "Питання в черзі · спершу завершиться поточна відповідь" }
+    }
+    private func startNextQueuedAnswer() {
+        guard !generating, !questionEditing, !answerQueue.items.isEmpty else { return }
+        let inbox = questionInbox
+        guard let item = answerQueue.next(isCurrent: { inbox.isCurrent($0, revision: $1) }) else { return }
+        generate(item.text, context: item.context, before: item.before, automatic: item.automatic)
+        if let id = item.entryID { generatedQuestion = (id, item.revision, item.automatic) }
+        if item.automatic { autoAnswerStatus = "Завершене питання · генерується відповідь" }
+    }
+    /// True when the live answer is already the newest logged turn.
+    var liveAnswerIsLogged: Bool {
+        !generating && answerLog.turns.last.map { $0.question == question && $0.answer == answer } ?? false
+    }
+    var displayedQuestion: String { answerLog.shownTurn?.question ?? question }
+    var displayedAnswer: String { answerLog.shownTurn?.answer ?? answer }
     private func invalidateReplacedAutomaticAnswer() {
         if let generatedQuestion, generatedQuestion.automatic,
            !questionInbox.isCurrent(generatedQuestion.id, revision: generatedQuestion.revision) {
-            let next = pendingDetectedQuestion
-            cancelGeneration(); pendingDetectedQuestion = next
+            stopCurrentAnswer()
             autoAnswerStatus = "Питання змінено або перервано · попередню генерацію скасовано"
         }
     }
@@ -565,21 +586,26 @@ import LocalCopilotCore
             record(DialogueRecord(source: "Введено вручну", text: input, kind: "manual"))
             questionInbox.append(input, source: "Введено вручну", context: sessionContext)
         }
-        generate(input.isEmpty ? resolveSpeechQuestion(latestUtterance) : input)
+        let text = input.isEmpty ? resolveSpeechQuestion(latestUtterance) : input
+        if text.isEmpty { generate(text); return } // reports what to do
+        answerLog.showLive()
+        submit(AnswerQueue.Item(text: text, context: sessionContext, before: Date()))
+        startNextQueuedAnswer()
     }
     func answerSelectedQuestion(_ entry: QuestionInbox.Entry) {
         recognizedQuestionNote = "Обране питання · " + entry.date.formatted(date: .omitted, time: .standard)
-        generate(entry.text, context: entry.context, before: entry.updated)
-        generatedQuestion = (entry.id, entry.revision, false)
+        answerLog.showLive()
+        submit(AnswerQueue.Item(text: entry.text, context: entry.context, before: entry.updated, entryID: entry.id, revision: entry.revision))
+        startNextQueuedAnswer()
     }
-    func generate(_ input: String, context: SessionContext? = nil, before cutoff: Date = Date()) {
+    func generate(_ input: String, context: SessionContext? = nil, before cutoff: Date = Date(), automatic: Bool = false) {
         guard !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { error = "Enter a question or capture a completed utterance first."; return }
         let useCode = CodeQuestionRouter.needsCode(input, previousCodeQuestion: lastQuestionUsedCode)
         let responseContext = context ?? sessionContext
         let journalSession = session
         let continuingCodeQuestion = lastQuestionUsedCode && useCode && !QuestionContextRouter.isSelfContained(input)
         lastQuestionUsedCode = useCode
-        cancelGeneration()
+        stopCurrentAnswer()
         question = input; editedQuestion = input; answer = ""; thinkingText = ""; generating = true
         firstTokenSeconds = nil; generationSeconds = nil; answerTruncated = false; contentParser = ThinkingStreamParser(); generationStarted = Date()
         let id = UUID(); generationID = id; var snapshot = settings
@@ -605,8 +631,8 @@ import LocalCopilotCore
                     self.sessionContext.append(speaker: "Показаний код: " + self.screen.sourceName, text: String(self.screen.codeText.prefix(10000)))
                 }
                 // A chart cannot be answered from source text: always look at the screen for it.
-                let visual = VisualQuestionRouter.isVisual(input)
-                let seeScreen = useCode && snapshot.claudeSendScreenshots
+                let visual = ScreenshotPolicy.capturesForVisualQuestion(visual: VisualQuestionRouter.isVisual(input), cloud: useClaude, automatic: automatic)
+                let seeScreen = ScreenshotPolicy.capturesForCodeQuestion(codeQuestion: useCode, allowed: snapshot.claudeSendScreenshots, cloud: useClaude, automatic: automatic)
                 if (visual || seeScreen) && self.screen.enabled {
                     await self.screen.ensureIDEWindow()
                     if self.screen.hasSource { await self.screen.refreshForAnswer() }
@@ -642,8 +668,8 @@ import LocalCopilotCore
                 // Otherwise vision remains a fallback when no project is connected.
                 if ((useCode && retrieved == nil) || visual || seeScreen) && self.screen.enabled && self.screen.useImage, let data = self.screen.imageData {
                     if useClaude {
-                        if snapshot.claudeSendScreenshots && data.count < 3_700_000 { images = [data.base64EncodedString()] }
-                        else { self.diagnostics.log("Screenshot not sent to Claude: disabled or larger than the API limit") }
+                        if ScreenshotPolicy.sendsImage(allowed: snapshot.claudeSendScreenshots, cloud: true, automatic: automatic) && data.count < 3_700_000 { images = [data.base64EncodedString()] }
+                        else { self.diagnostics.log("Screenshot not sent to Claude: disabled, automatic answer, or larger than the API limit") }
                     } else if try await ollama.supportsVision(model: snapshot.model) { images = [data.base64EncodedString()] }
                     else { self.diagnostics.log("Selected model has no Vision; using OCR text only") }
                 }
@@ -666,6 +692,7 @@ import LocalCopilotCore
                 self.generating = false; self.generationSeconds = Date().timeIntervalSince(self.generationStarted)
                 self.lastModelTouch = Date()
                 if !self.answer.isEmpty {
+                    self.answerLog.add(question: input, answer: self.answer)
                     self.record(DialogueRecord(source: "Асистент", text: input + "\n" + self.answer, kind: "answer"))
                     self.sessionContext.append(speaker: "Питання", text: input)
                     self.sessionContext.append(speaker: "Підказка асистента", text: self.answer)
@@ -679,10 +706,9 @@ import LocalCopilotCore
                 }
                 guard self.generationID == id else { return }
                 if self.answer.isEmpty && !self.thinkingText.isEmpty { self.error = "The model returned only thinking. Disable thinking or select a coding model." }
-                if self.pendingQuestion == nil { self.autoAnswerStatus = "Відповідь готова" }
+                self.autoAnswerStatus = self.answerQueue.items.isEmpty ? "Відповідь готова" : "Відповідь готова · беру наступне питання"
                 self.diagnostics.log("Answer completed: first token \(self.firstTokenSeconds.map { String(format: "%.2f", $0) } ?? "none") s, total \(String(format: "%.2f", self.generationSeconds ?? 0)) s")
-                if let next = self.pendingQuestion, !self.questionEditing { self.pendingQuestion = nil; self.generate(next) }
-                else { self.scheduleMemoryCompression() }
+                if self.answerQueue.items.isEmpty { self.scheduleMemoryCompression() }
             } catch {
                 guard let self, self.generationID == id else { return }
                 self.generating = false
@@ -699,8 +725,6 @@ import LocalCopilotCore
             guard !Task.isCancelled, !self.generating, !self.summarizing else { self.memoryTask = nil; return }
             await self.compactMemory(settings: options, id: id)
             self.memoryTask = nil
-            guard self.generationID == id, !Task.isCancelled else { return }
-            if let pending = self.pendingQuestion, !self.questionEditing { self.pendingQuestion = nil; self.generate(pending) }
         }
     }
     private func compactMemory(settings: CopilotSettings, id: UUID) async {
@@ -720,11 +744,10 @@ import LocalCopilotCore
     func editLatestQuestion() { editedQuestion = question.isEmpty ? latestUtterance : question; questionEditing = true }
     func cancelQuestionEdit() {
         questionEditing = false
-        if let pendingQuestion, !generating { self.pendingQuestion = nil; generate(pendingQuestion) }
     }
     func retryEditedQuestion() {
         let input = editedQuestion.trimmingCharacters(in: .whitespacesAndNewlines)
-        let queued = pendingQuestion; questionEditing = false; recognizedQuestionNote = "Питання виправлено вручну"; generate(input); pendingQuestion = queued
+        questionEditing = false; recognizedQuestionNote = "Питання виправлено вручну"; generate(input)
     }
     private func receivePacket(_ packet: OllamaPacket, id: UUID) {
         guard generationID == id else { return }
@@ -742,10 +765,15 @@ import LocalCopilotCore
         }
         if let thought = packet.message?.thinking { thinkingText = String((thinkingText + thought).suffix(12000)) }
     }
-    func cancelGeneration() { semanticTask?.cancel(); semanticToken = UUID(); generatedQuestion = nil; pendingDetectedQuestion = nil; memoryTask?.cancel(); memoryTask = nil; generationID = UUID(); generationTask?.cancel(); generationTask = nil; generating = false; pendingQuestion = nil }
+    /// The stop button: ends the answer and the queue. The questions stay in the inbox.
+    func cancelGeneration() { stopCurrentAnswer(); answerQueue.removeAll() }
+    private func stopCurrentAnswer() {
+        if generating, !answer.isEmpty { answerLog.add(question: question, answer: answer, interrupted: true) }
+        semanticTask?.cancel(); semanticToken = UUID(); generatedQuestion = nil; memoryTask?.cancel(); memoryTask = nil; generationID = UUID(); generationTask?.cancel(); generationTask = nil; generating = false
+    }
     func newConversation() async {
         questionInbox = QuestionInbox()
-        await stop(finalize: false); cancelGeneration(); recognizedQuestionNote = ""; autoAnswerStatus = "Автовідповідь: очікування завершеного питання"; messages = []; sessionContext = SessionContext(); sessionTranscript = ""; memorySummary = ""; sessionTopic = ""; lastCodeContext = ""; lastProjectCode = ""; lastQuestionUsedCode = false; questionEditing = false; screen.clear(); session = UUID(); question = ""; answer = ""; thinkingText = ""; latestUtterance = ""
+        await stop(finalize: false); cancelGeneration(); answerLog = AnswerLog(); recognizedQuestionNote = ""; autoAnswerStatus = "Автовідповідь: очікування завершеного питання"; messages = []; sessionContext = SessionContext(); sessionTranscript = ""; memorySummary = ""; sessionTopic = ""; lastCodeContext = ""; lastProjectCode = ""; lastQuestionUsedCode = false; questionEditing = false; screen.clear(); session = UUID(); question = ""; answer = ""; thinkingText = ""; latestUtterance = ""
         systemTranscript = ""; microphoneTranscript = ""; systemInterim = ""; microphoneInterim = ""
         sessionRecords = []; transcriptCount = 0; activeSeconds = 0; sessionSeconds = 0; pendingAudioSeconds = 0; recognitionGaps = 0; droppedAudioFrames = 0; seenUtterances = []; captureTranscriptPrefix = [:]
     }
@@ -762,7 +790,7 @@ import LocalCopilotCore
         do {
             guard let id = try await journal.latest() else { dialogueStatus = "Збереженого діалогу немає"; return }
             let records = try await journal.records(session: id)
-            cancelGeneration(); questionInbox = QuestionInbox(); sessionContext = SessionContext()
+            cancelGeneration(); answerLog = AnswerLog(); questionInbox = QuestionInbox(); sessionContext = SessionContext()
             messages = []; question = ""; answer = ""; thinkingText = ""; systemInterim = ""; microphoneInterim = ""
             recognitionGaps = 0; pendingAudioSeconds = 0; sessionTopic = ""; lastCodeContext = ""; lastProjectCode = ""; lastQuestionUsedCode = false
             systemTranscript = ""; microphoneTranscript = ""; sessionRecords = records; transcriptCount = records.count
@@ -787,19 +815,20 @@ import LocalCopilotCore
         } catch { self.error = "Відновлення діалогу: " + error.localizedDescription }
     }
     func restore(_ record: ConversationRecord) {
-        cancelGeneration(); question = record.question; answer = record.answer
+        cancelGeneration(); answerLog.showLive(); question = record.question; answer = record.answer
         messages = [ChatMessage(role: "user", content: record.question), ChatMessage(role: "assistant", content: record.answer)]
     }
-    func copyAnswer() { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(answer, forType: .string) }
+    func copyAnswer() { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(displayedAnswer, forType: .string) }
     func testWindowPrivacy() async {
         guard !diagnostics.testing else { return }
         diagnostics.testing = true; defer { diagnostics.testing = false }
-        let exclusion = settings.privateWindow
+        let ghost = settings.privateWindow
         do {
-            try await Task.sleep(for: .milliseconds(250))
-            let url = try await WindowPrivacyDiagnostics.capture()
-            diagnostics.log("Full-display capture (exclusion \(exclusion ? "ON" : "OFF")) saved locally: " + url.path + ". Inspect whether Questionio is visible. This does not guarantee other capture services behave the same.")
-        } catch { self.error = error.localizedDescription; diagnostics.log("Capture exclusion test failed: " + error.localizedDescription) }
+            let visible = try await WindowPrivacyDiagnostics.isVisibleInCapture()
+            guard settings.privateWindow == ghost else { return }
+            if ghost { ghostCheck = visible ? .visible : .hidden }
+            diagnostics.log("Capture test, Ghost \(ghost ? "ON" : "OFF"): panel \(visible ? "VISIBLE" : "not visible") in full-display ScreenCaptureKit capture. Zoom, Meet and Teams may differ.")
+        } catch { self.error = error.localizedDescription; diagnostics.log("Capture test failed: " + error.localizedDescription) }
     }
     func testAudio(_ mode: AudioMode) async {
         guard !running, !starting, !diagnostics.testing else { return }
@@ -812,7 +841,7 @@ import LocalCopilotCore
                 for await frame in frames {
                     if Task.isCancelled { break }
                     let level = VoiceActivityDetector.rms(frame.samples); peak = max(peak, level)
-                    if frame.source == .system { self?.systemLevel = level } else { self?.micLevel = level }
+                    if frame.source == .system { self?.levels.system = level } else { self?.levels.mic = level }
                 }
                 return peak
             }
@@ -821,7 +850,7 @@ import LocalCopilotCore
             await capture.stop(); let peak = await captureTask.value
             diagnostics.log("\(mode.rawValue) peak RMS: \(String(format: "%.4f", peak)). \(peak > 0.001 ? "Real signal received" : "No audible signal; check permissions/source")")
         } catch { diagnostics.log("Audio test failed: \(error.localizedDescription)"); await capture.stop() }
-        micLevel = 0; systemLevel = 0
+        levels.mic = 0; levels.system = 0
     }
     func testWhisperFile() async {
         guard !running, !starting, !modelBusy, !diagnostics.testing else { return }

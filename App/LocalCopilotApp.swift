@@ -35,7 +35,7 @@ final class CopilotPanel: NSPanel {
     private var hotkeys: HotkeyManager?
     private weak var model: ConversationManager?
     private var lastHotkeyEnabled: Bool?
-    func applicationDidFinishLaunching(_ notification: Notification) { NSApp.setActivationPolicy(.regular) }
+    func applicationDidFinishLaunching(_ notification: Notification) { NSApp.setActivationPolicy(.regular); WindowPrivacyDiagnostics.removeOldTestImage() }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func configure(_ model: ConversationManager) {
         guard self.model == nil else { applyPreferences(); return }; self.model = model
@@ -54,21 +54,15 @@ final class CopilotPanel: NSPanel {
         }
         hotkeys.failure = { [weak model] in model?.diagnostics.log($0) }
         applyPreferences()
-        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(spaceChanged), name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(windowChanged), name: NSWindow.didBecomeKeyNotification, object: nil)
-    }
-    @objc private func spaceChanged(_ notification: Notification) {
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(500))
-            guard let self, let panel = self.panel, panel.isVisible, let model = self.model else { return }
-            model.diagnostics.log("Notes Space check: ghost=\(model.settings.privateWindow), onActiveSpace=\(panel.isOnActiveSpace), level=\(panel.level.rawValue)")
-        }
+        // Also covers a window that appears without ever taking focus.
+        NotificationCenter.default.addObserver(self, selector: #selector(windowChanged), name: NSWindow.didChangeOcclusionStateNotification, object: nil)
     }
     @objc private func windowChanged(_ notification: Notification) { applyPreferences() }
     func applyPreferences() {
         guard let model else { return }
         if let panel {
-            if model.settings.privateWindow {
+            if model.settings.panelOverlay {
                 panel.level = .floating
                 panel.collectionBehavior = [.canJoinAllSpaces, .canJoinAllApplications, .fullScreenAuxiliary, .fullScreenDisallowsTiling]
             } else {
@@ -76,7 +70,8 @@ final class CopilotPanel: NSPanel {
                 panel.collectionBehavior = [.auxiliary, .fullScreenNone, .fullScreenDisallowsTiling]
             }
         }
-        for window in NSApp.windows { window.sharingType = model.settings.privateWindow ? .none : .readOnly }
+        let sharing: NSWindow.SharingType = model.settings.privateWindow ? .none : .readOnly
+        for window in NSApp.windows where window.sharingType != sharing { window.sharingType = sharing }
         if lastHotkeyEnabled != model.settings.hotkeysEnabled { lastHotkeyEnabled = model.settings.hotkeysEnabled; hotkeys?.setEnabled(model.settings.hotkeysEnabled) }
     }
     func togglePanel() {
@@ -92,6 +87,6 @@ final class CopilotPanel: NSPanel {
             self.panel = panel
         }
         applyPreferences(); panel?.makeKeyAndOrderFront(nil)
-        if !model.settings.privateWindow { NSApp.activate(ignoringOtherApps: true) }
+        if !model.settings.panelOverlay { NSApp.activate(ignoringOtherApps: true) }
     }
 }

@@ -19,7 +19,7 @@ struct MainView: View {
                 Label("Діагностика", systemImage: "stethoscope").tag("Diagnostics")
             }.scrollContentBackground(.hidden).navigationTitle("Questionio").navigationSplitViewColumnWidth(min: 170, ideal: 190)
             .safeAreaInset(edge: .bottom) {
-                Label { VStack(alignment: .leading, spacing: 2) { Text("Усе локально").font(.caption.weight(.medium)); Text("без хмари й підписок").font(.caption2).foregroundStyle(.secondary) } } icon: { Image(systemName: "lock.shield.fill").foregroundStyle(.green) }
+                Label { VStack(alignment: .leading, spacing: 2) { Text(model.answersUseClaude ? "Відповідає Haiku 5.5" : "Усе локально").font(.caption.weight(.medium)); Text(model.answersUseClaude ? "текст і код ідуть в Anthropic" : "без хмари й підписок").font(.caption2).foregroundStyle(.secondary) } } icon: { Image(systemName: model.answersUseClaude ? "cloud.fill" : "lock.shield.fill").foregroundStyle(model.answersUseClaude ? Color.blue : Color.green) }
                     .frame(maxWidth: .infinity, alignment: .leading).padding(12)
             }
         } detail: {
@@ -164,10 +164,10 @@ struct LiveView: View {
             BarChip(symbol: model.settings.effectiveAudioMode == .microphone ? "mic" : "speaker.wave.2",
                     value: model.running ? model.captureSourceName : model.configuredSourceName,
                     help: "Джерело звуку · " + model.settings.effectiveAudioMode.label, maxWidth: 160,
-                    accessory: AnyView(HStack(spacing: 2) {
-                        if model.settings.effectiveAudioMode != .microphone { MiniMeter(level: model.systemLevel) }
-                        if model.settings.effectiveAudioMode != .system { MiniMeter(level: model.micLevel) }
-                    })) { CaptureSourceView(model: model).frame(width: 440) }
+                    accessory: AnyView(LevelReader(levels: model.levels) { levels in HStack(spacing: 2) {
+                        if model.settings.effectiveAudioMode != .microphone { MiniMeter(level: levels.system) }
+                        if model.settings.effectiveAudioMode != .system { MiniMeter(level: levels.mic) }
+                    } })) { CaptureSourceView(model: model).frame(width: 440) }
             BarChip(symbol: "waveform", value: engineName, help: "Розпізнавання · " + model.whisperStatus, tone: StatusTone.of(model.whisperStatus)) { EnginePanel(model: model).frame(width: 340) }
             BarChip(symbol: "cpu", value: activeModel, help: "Модель AI · " + model.ollamaStatus, tone: StatusTone.of(model.ollamaStatus), maxWidth: 130) { ModelPanel(model: model).frame(width: 340) }
             BarChip(symbol: model.project.rootPath.isEmpty ? "folder.badge.plus" : "folder", value: model.project.rootPath.isEmpty ? "Код" : URL(fileURLWithPath: model.project.rootPath).lastPathComponent,
@@ -351,11 +351,11 @@ struct FloatingView: View {
                     .foregroundStyle(model.questionInbox.entries.isEmpty ? .secondary : .primary).help(latest).padding(.leading, 4)
                 QuestionInboxView(model: model, compact: true).fixedSize()
                 AutoListenToggle(model: model)
-                AccentButton(title: "Відповісти") { model.generateManual() }.disabled(model.generating).help("Відповісти на останнє питання (⌃⌥⌘G)")
+                AccentButton(title: "Відповісти") { model.generateManual() }.help("Відповісти на останнє питання (⌃⌥⌘G)")
                 IconButton(symbol: "slider.horizontal.3", help: "Джерело звуку") { showSource.toggle() }
                     .popover(isPresented: $showSource) { CaptureSourceView(model: model).frame(width: 420).padding(16) }
                 IconButton(symbol: model.settings.alwaysOnTop ? "pin.fill" : "pin", help: "Поверх інших вікон") { model.settings.alwaysOnTop.toggle() }
-                    .disabled(model.settings.privateWindow)
+                    .disabled(model.settings.panelOverlay)
             }.padding(6).frame(height: UI.bar).glass(Capsule())
             if !model.answer.isEmpty || model.generating || !model.question.isEmpty {
                 AnswerCard(model: model, compact: true).transition(.opacity.combined(with: .move(edge: .top)))
@@ -408,6 +408,14 @@ struct HistoryView: View {
 }
 
 struct CaptureSourceView: View {
+    private var ghostTitle: String {
+        guard model.settings.privateWindow else { return "Ghost OFF" }
+        switch model.ghostCheck {
+        case .untested: return "Ghost ON · не перевірено"
+        case .hidden: return "Ghost ON · приховано в тесті"
+        case .visible: return "Ghost ON · ВИДНО в тесті"
+        }
+    }
     @ObservedObject var model: ConversationManager
     private var locked: Bool { model.running || model.starting || model.stopping }
     var body: some View {
@@ -459,7 +467,7 @@ struct CaptureSourceView: View {
             HStack {
                 Text("Власні терміни — у Налаштуваннях → Розпізнавання").font(.caption2).foregroundStyle(.tertiary)
                 Spacer()
-                Button { model.settings.privateWindow.toggle() } label: { Label(model.settings.privateWindow ? "Ghost ON" : "Ghost OFF", systemImage: model.settings.privateWindow ? "eye.slash" : "eye") }.glassButton().controlSize(.small)
+                Button { model.settings.privateWindow.toggle() } label: { Label(ghostTitle, systemImage: model.settings.privateWindow ? "eye.slash" : "eye").foregroundStyle(model.settings.privateWindow && model.ghostCheck == .visible ? Color.red : Color.primary) }.glassButton().controlSize(.small)
             }
         }
     }

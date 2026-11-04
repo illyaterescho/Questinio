@@ -1,4 +1,5 @@
 import XCTest
+import CoreGraphics
 @testable import LocalCopilotCore
 final class CoreTests: XCTestCase {
     func testQuestionInboxPreservesContextAtQuestionTime() {
@@ -333,10 +334,162 @@ final class CoreTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let store = SettingsManager(url: directory.appendingPathComponent("settings.json"))
-        try JSONSerialization.data(withJSONObject: ["schemaVersion": 8, "claudeSendScreenshots": false]).write(to: store.url)
-        XCTAssertTrue(try store.load().claudeSendScreenshots)
-        var settings = try store.load(); settings.claudeSendScreenshots = false; try store.save(settings)
-        XCTAssertFalse(try store.load().claudeSendScreenshots) // later opt-out sticks
+        try JSONSerialization.data(withJSONObject: ["schemaVersion": 9, "claudeSendScreenshots": true, "privateWindow": true]).write(to: store.url)
+        var settings = try store.load()
+        XCTAssertFalse(settings.claudeSendScreenshots) // version 9 forced it on, so it is reset once
+        XCTAssertTrue(settings.panelOverlay) // whoever had Ghost keeps the panel behaviour
+        settings.claudeSendScreenshots = true; try store.save(settings)
+        XCTAssertTrue(try store.load().claudeSendScreenshots) // later opt-in sticks
+    }
+    func testAutomaticAnswersNeverSendTheScreenToTheCloud() {
+        XCTAssertFalse(ScreenshotPolicy.sendsImage(allowed: true, cloud: true, automatic: true))
+        XCTAssertFalse(ScreenshotPolicy.capturesForCodeQuestion(codeQuestion: true, allowed: true, cloud: true, automatic: true))
+        XCTAssertFalse(ScreenshotPolicy.capturesForVisualQuestion(visual: true, cloud: true, automatic: true))
+        XCTAssertFalse(ScreenshotPolicy.sendsImage(allowed: false, cloud: true, automatic: false)) // off by default
+        XCTAssertTrue(ScreenshotPolicy.sendsImage(allowed: true, cloud: true, automatic: false))
+        XCTAssertTrue(ScreenshotPolicy.sendsImage(allowed: false, cloud: false, automatic: true)) // a local model keeps it on the Mac
+        XCTAssertTrue(ScreenshotPolicy.capturesForVisualQuestion(visual: true, cloud: false, automatic: true))
+    }
+    func testCaptureComparisonSeesAWindowButNotEqualPictures() throws {
+        func picture(panel: CGRect?) throws -> CGImage {
+            let context = try XCTUnwrap(CGContext(data: nil, width: 400, height: 300, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.setFillColor(CGColor(red: 0.2, green: 0.3, blue: 0.4, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 400, height: 300))
+            if let panel { context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1)); context.fill(panel) }
+            return try XCTUnwrap(context.makeImage())
+        }
+        let empty = try picture(panel: nil)
+        XCTAssertFalse(CaptureComparison.differ(empty, try picture(panel: nil)))
+        XCTAssertTrue(CaptureComparison.differ(empty, try picture(panel: CGRect(x: 50, y: 50, width: 200, height: 150))))
+    }
+    func testProgrammingRuleReachesDefaultPromptButNotCustomOnes() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let store = SettingsManager(url: directory.appendingPathComponent("settings.json"))
+        try JSONSerialization.data(withJSONObject: ["schemaVersion": 10, "systemPrompt": CopilotSettings.previousDeveloperPrompt]).write(to: store.url)
+        XCTAssertEqual(try store.load().systemPrompt, CopilotSettings.developerPrompt)
+        XCTAssertEqual(try store.load().schemaVersion, 11)
+        try JSONSerialization.data(withJSONObject: ["schemaVersion": 10, "systemPrompt": "Мій промпт"]).write(to: store.url)
+        XCTAssertEqual(try store.load().systemPrompt, "Мій промпт")
+    }
+    func testLineNumberIsRecognizedWithAnySpokenEnding() {
+        for question in ["що означає три точки в 14-х рядку.", "в 14-му рядку", "14-ому рядку", "14-тому рядку", "14й рядок", "14-й рядок", "14 рядку", "в 14-ій строці", "14-ї строчки", "14-та строка", "рядок 14", "line 14"] {
+            XCTAssertEqual(ProjectCodeIndex.requestedLine(question), 14, question)
+        }
+        for question in ["додай 2 нові рядки", "тут 3 складні стратегії"] { XCTAssertNil(ProjectCodeIndex.requestedLine(question), question) }
+    }
+    func testSpokenLineQuestionGetsThatLineOfTheOpenFile() {
+        let path = "lab-04/src/app/array-result/array-result.component.ts"
+        let body = (1...13).map { "// line \($0)" } + ["    this.inputNumbers = [...value];"]
+        let index = ProjectCodeIndex(files: [ProjectCodeFile(path: path, text: body.joined(separator: "\n")), ProjectCodeFile(path: "lab-01/other.ts", text: "const other = 1;")])
+        let question = "що означає три точки в 14-х рядку."
+        XCTAssertTrue(CodeQuestionRouter.needsCode(question))
+        let result = index.search(question: question, active: path)
+        XCTAssertEqual(result.exactLine, 14)
+        XCTAssertEqual(result.files, [path])
+        XCTAssertTrue(result.context.contains("[...value]"))
+    }
+    func testSpokenRangeWrittenAsOneNumberFindsBothLines() {
+        let path = "lab-04/array-result.component.ts"
+        let body = (1...45).map { $0 == 30 ? "const minimum: number | undefined = this.minimum;" : $0 == 31 ? "const maximum: number | undefined = this.maximum;" : "// line \($0)" }
+        let index = ProjectCodeIndex(files: [ProjectCodeFile(path: path, text: body.joined(separator: "\n"))])
+        let result = index.search(question: "Чому ми юзаєм Undefine в 3031 рядку на шо він?", active: path)
+        XCTAssertTrue(result.context.contains("30: const minimum"))
+        XCTAssertTrue(result.context.contains("31: const maximum"))
+        XCTAssertTrue(result.context.contains("рядки 30–31"))
+    }
+    func testOutOfRangeNumberIsOnlySplitWhenItLooksLikeARange() {
+        XCTAssertEqual(ProjectCodeIndex.spokenRange(3031, lineCount: 45), 30...31)
+        XCTAssertEqual(ProjectCodeIndex.spokenRange(910, lineCount: 45), 9...10)
+        XCTAssertNil(ProjectCodeIndex.spokenRange(129, lineCount: 45)) // 1 and 29 are too far apart
+        XCTAssertNil(ProjectCodeIndex.spokenRange(3130, lineCount: 45)) // goes backwards
+        XCTAssertNil(ProjectCodeIndex.spokenRange(3031, lineCount: 30)) // past the end of the file
+        XCTAssertNil(ProjectCodeIndex.spokenRange(305, lineCount: 45)) // 30 and 5, or 3 and 05
+    }
+    private var labFiles: [ProjectCodeFile] { [
+        ProjectCodeFile(path: "lab-04/src/app/app.component.ts", text: "export class AppComponent {}"),
+        ProjectCodeFile(path: "lab-05/src/app/services/weather.service.ts", text: "import axios from 'axios';\nconst apiKey = 'x';\nexport class WeatherService {\n  load() { return axios.get('https://api.weatherapi.com/v1/current.json'); }\n}"),
+        ProjectCodeFile(path: "lab-05/src/app/app.component.ts", text: "export class AppComponent { title = 'weather'; }"),
+        ProjectCodeFile(path: "lab-06/src/app/services/weather.service.ts", text: "import axios from 'axios';\nconst apiKey = 'x';\nexport class WeatherService {}")
+    ] }
+    func testLabQuestionInAnyFormSearchesThatLab() {
+        let index = ProjectCodeIndex(files: labFiles)
+        for question in ["Покажи де ти підключав апі 5 лабі", "де ти підключав апі в 5 лабі", "де юзалось апі в 5-й лабі", "де підключено API у 5-ій лабі", "апі в п'ятій лабі", "апі в п’ятій лабі", "апі в лабі 5", "апі в лаба 5", "апі в лабораторній 5", "апі в лабораторній роботі №5", "апі в lab-05", "апі в lab 5", "де в 5 лабі HTTP запит", "де в 5 лабі запит до сервера"] {
+            XCTAssertTrue(CodeQuestionRouter.needsCode(question), question)
+            let result = index.search(question: question, active: "lab-04/src/app/app.component.ts")
+            XCTAssertEqual(result.files.first, "lab-05/src/app/services/weather.service.ts", question)
+            XCTAssertFalse(result.files.contains { $0.hasPrefix("lab-06/") || $0.hasPrefix("lab-04/") }, question)
+            XCTAssertTrue(result.context.contains("axios.get"), question)
+        }
+    }
+    func testWhereWasItUsedQuestionsGoToTheCode() {
+        for question in ["де використовується Promise.all", "де юзалось апі", "де ти використовував axios", "покажи де це написано", "де викликається load", "де імпортується axios"] {
+            XCTAssertTrue(CodeQuestionRouter.needsCode(question), question)
+        }
+        for question in ["Що таке проміс?", "Чим відрізняється Promise від async/await?", "Яка столиця Франції?"] {
+            XCTAssertFalse(CodeQuestionRouter.needsCode(question), question)
+        }
+    }
+    func testLabWithoutAMatchListsItsFilesInsteadOfNothing() {
+        let result = ProjectCodeIndex(files: labFiles).search(question: "де графічний інтерфейс у 5 лабі", active: nil)
+        XCTAssertTrue(result.context.contains("lab-05/src/app/app.component.ts"))
+        XCTAssertFalse(result.context.contains("lab-06/"))
+    }
+    private var overviewFiles: [ProjectCodeFile] { [
+        ProjectCodeFile(path: "lab-06/README.md", text: "# Практична робота №6\nЗберігає вибране в localStorage."),
+        ProjectCodeFile(path: "lab-06/src/app/services/favorites-storage.service.ts", text: "@Injectable()\nexport class FavoritesStorageService {\n  private readonly key = 'k';\n  load(): string[] {\n    if (x) { return []; }\n    return [];\n  }\n  save(items: string[]): void {\n  }\n}"),
+        ProjectCodeFile(path: "lab-06/src/app/app.component.spec.ts", text: "describe('App', () => {\n  it('creates the app', () => {\n    const value = 1;\n  });\n});"),
+        ProjectCodeFile(path: "lab-06/src/app/app.component.css", text: "secretcss { color: red; }"),
+        ProjectCodeFile(path: "lab-06/package.json", text: "{\"name\":\"secretjson\"}"),
+        ProjectCodeFile(path: "lab-07/src/app/task.service.ts", text: "export class TaskService {}")
+    ] }
+    func testWhatDidYouDoInALabGetsAnOverviewOfThatLab() {
+        let index = ProjectCodeIndex(files: overviewFiles)
+        for question in ["що ти робив в 6 лабі", "що ти робив у шостій лабі", "що ви робили в лабі 6", "що зробив у 6-й лабі", "розкажи про 6 лабу", "опиши лабораторну роботу 6", "про що 6 лаба", "яке завдання в 6 лабі", "що було в lab-06", "що ти там робив у 6 лабі", "що зроблено в шостій лабі", "чим ти займався в 6 лабі", "що писав у лабораторній 6"] {
+            XCTAssertTrue(CodeQuestionRouter.needsCode(question), question)
+            let context = index.search(question: question, active: "lab-07/src/app/task.service.ts").context
+            XCTAssertTrue(context.contains("Зберігає вибране в localStorage"), question)
+            XCTAssertTrue(context.contains("export class FavoritesStorageService"), question)
+            XCTAssertTrue(context.contains("load(): string[]"), question)
+            XCTAssertTrue(context.contains("save(items: string[])"), question)
+            XCTAssertTrue(context.contains("creates the app"), question)
+            XCTAssertFalse(context.contains("secretcss") || context.contains("secretjson"), question)
+            XCTAssertFalse(context.contains("TaskService"), question)
+        }
+    }
+    func testOverviewOutlinesABigFileAndAddsOnlyWhatFits() {
+        let big = "export class Big {\n  run(): void {\n    if (secretBody) { work(); }\n  }\n}\n" + String(repeating: "// padding\n", count: 500)
+        let files = [ProjectCodeFile(path: "lab-06/big.ts", text: big), ProjectCodeFile(path: "lab-06/small.ts", text: "const smallBody = 1;\nexport function small(): void {\n}")]
+        let context = ProjectCodeIndex(files: files).search(question: "що ти робив в 6 лабі", active: nil, budget: 1000).context
+        XCTAssertTrue(context.contains("run(): void"))
+        XCTAssertFalse(context.contains("secretBody"))
+        XCTAssertTrue(context.contains("smallBody"))
+        XCTAssertLessThanOrEqual(context.count, 1000)
+    }
+    func testThisLabUsesTheLabOfTheOpenFile() {
+        let index = ProjectCodeIndex(files: overviewFiles)
+        XCTAssertTrue(CodeQuestionRouter.needsCode("що ти робив в цій лабі"))
+        let context = index.search(question: "що ти робив в цій лабі", active: "lab-06/src/app/app.component.spec.ts").context
+        XCTAssertTrue(context.contains("FavoritesStorageService"))
+        XCTAssertFalse(context.contains("TaskService"))
+    }
+    func testSpecificQuestionAboutALabStillSearchesForThatThing() {
+        let result = ProjectCodeIndex(files: labFiles).search(question: "розкажи про апі в 5 лабі", active: nil)
+        XCTAssertEqual(result.files.first, "lab-05/src/app/services/weather.service.ts")
+        XCTAssertTrue(result.context.contains("axios.get"))
+    }
+    func testMissingLabSaysWhichLabsExist() {
+        XCTAssertTrue(ProjectCodeIndex(files: labFiles).search(question: "що ти робив у п'ятій лабі", active: nil).context.contains("WeatherService"))
+        XCTAssertTrue(ProjectCodeIndex(files: labFiles).search(question: "що ти робив у п’ятій лабі", active: nil).context.contains("WeatherService"))
+        let context = ProjectCodeIndex(files: overviewFiles).search(question: "що ти робив в 9 лабі", active: nil).context
+        XCTAssertTrue(context.contains("lab-09"))
+        XCTAssertTrue(context.contains("lab-06") && context.contains("lab-07"))
+    }
+    func testBigLabOverviewFitsTheBudgetAndKeepsEveryFile() {
+        let files = (1...30).map { i in ProjectCodeFile(path: "lab-08/src/f\(i).ts", text: "export class Class\(i) {\n" + (1...40).map { "  method\($0)(): void {\n  }" }.joined(separator: "\n") + "\n}") }
+        let result = ProjectCodeIndex(files: files).search(question: "що ти робив в 8 лабі", active: nil, budget: 4800)
+        XCTAssertLessThanOrEqual(result.context.count, 4800)
+        XCTAssertTrue(result.context.contains("Class1 ") && result.context.contains("Class30 "))
     }
     func testListenOnLaunchIsOptInAndPersists() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -361,17 +514,6 @@ final class CoreTests: XCTestCase {
         let messages = SessionContext().messages(prompt: CopilotSettings.developerPrompt, history: [], question: "Що таке кеш?", code: "", topic: "", budget: 3200)
         XCTAssertEqual(messages[0].content, CopilotSettings.developerPrompt)
         XCTAssertTrue(messages[0].content.contains("не бачиш"))
-    }
-    func testPromptMigrationToV8KeepsCustomPrompts() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let store = SettingsManager(url: directory.appendingPathComponent("settings.json"))
-        try JSONSerialization.data(withJSONObject: ["schemaVersion": 7, "systemPrompt": CopilotSettings.promptV7]).write(to: store.url)
-        XCTAssertEqual(try store.load().systemPrompt, CopilotSettings.developerPrompt)
-        XCTAssertEqual(try store.load().schemaVersion, 9)
-        try JSONSerialization.data(withJSONObject: ["schemaVersion": 7, "systemPrompt": "Мій промпт"]).write(to: store.url)
-        XCTAssertEqual(try store.load().systemPrompt, "Мій промпт")
     }
     func testFillersAndHangingWordsAreIncomplete() {
         for text in ["Що означають оці", "Чому ви взяли ці", "Розкажіть про", "Що ви отримали від", "Ну як воно, типу", "А ну"] { XCTAssertTrue(QuestionInbox.incomplete(text), text) }
@@ -403,7 +545,7 @@ final class CoreTests: XCTestCase {
     func testClaudeDefaultsUseHaikuAndNoKeyInSettings() throws {
         let settings = CopilotSettings()
         XCTAssertEqual(settings.answerBackend, "claude"); XCTAssertEqual(settings.backgroundBackend, "claude")
-        XCTAssertEqual(settings.claudeModel, "claude-haiku-5-5"); XCTAssertTrue(settings.claudeSendScreenshots)
+        XCTAssertEqual(settings.claudeModel, "claude-haiku-5-5"); XCTAssertFalse(settings.claudeSendScreenshots)
         let json = String(decoding: try JSONEncoder().encode(settings), as: UTF8.self)
         XCTAssertFalse(json.lowercased().contains("apikey")); XCTAssertFalse(json.contains("sk-ant"))
     }
@@ -492,20 +634,6 @@ final class CoreTests: XCTestCase {
         do { _ = try await router.transcribe([0], language: "uk", vocabulary: ""); XCTFail("Expected not-loaded error") }
         catch { XCTAssertTrue(error.localizedDescription.contains("Whisper is not loaded")) }
     }
-    func testLegacySettingsMigrateWithoutLosingAudioOrModel() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let store = SettingsManager(url: directory.appendingPathComponent("settings.json"))
-        let old: [String: Any] = ["model": "qwen3.5:4b", "modelPath": "/local/whisper", "language": "uk", "maxTokens": 256, "audioMode": "Both", "systemPrompt": "Ти — локальний помічник для навчання старий текст"]
-        try JSONSerialization.data(withJSONObject: old).write(to: store.url)
-        let migrated = try store.load()
-        XCTAssertEqual(migrated.maxTokens, -1); XCTAssertTrue(migrated.autoLoadWhisper)
-        XCTAssertEqual(migrated.modelPath, "/local/whisper"); XCTAssertEqual(migrated.audioMode, .both)
-        XCTAssertEqual(migrated.model, "qwen3.5:4b"); XCTAssertEqual(migrated.language, "uk")
-        XCTAssertEqual(migrated.systemPrompt, CopilotSettings.developerPrompt)
-        try store.save(migrated); XCTAssertEqual(try store.load(), migrated)
-    }
     func testMigrationPreservesCustomPrompt() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -513,54 +641,6 @@ final class CoreTests: XCTestCase {
         let store = SettingsManager(url: directory.appendingPathComponent("settings.json"))
         try JSONSerialization.data(withJSONObject: ["systemPrompt": "My own prompt"]).write(to: store.url)
         XCTAssertEqual(try store.load().systemPrompt, "My own prompt")
-    }
-    func testVersionTwoPromptMigration() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let store = SettingsManager(url: directory.appendingPathComponent("settings.json"))
-        for prompt in [CopilotSettings.legacyDeveloperPrompt, "My custom concise prompt"] {
-            try JSONSerialization.data(withJSONObject: ["schemaVersion": 2, "systemPrompt": prompt, "applicationID": "com.apple.QuickTimePlayerX", "microphoneID": 100, "maxTokens": -1]).write(to: store.url)
-            let result = try store.load()
-            XCTAssertEqual(result.schemaVersion, 9)
-            XCTAssertEqual(result.systemPrompt, prompt == CopilotSettings.legacyDeveloperPrompt ? CopilotSettings.developerPrompt : prompt)
-            XCTAssertEqual(result.applicationID, "com.apple.QuickTimePlayerX"); XCTAssertEqual(result.microphoneID, 100); XCTAssertEqual(result.maxTokens, -1)
-        }
-    }
-    func testVersionThreePromptMigration() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let store = SettingsManager(url: directory.appendingPathComponent("settings.json"))
-        for prompt in [CopilotSettings.legacyConcisePrompt, "My custom prompt v3"] {
-            try JSONSerialization.data(withJSONObject: ["schemaVersion": 3, "systemPrompt": prompt]).write(to: store.url)
-            let result = try store.load()
-            XCTAssertEqual(result.schemaVersion, 9)
-            XCTAssertEqual(result.systemPrompt, prompt == CopilotSettings.legacyConcisePrompt ? CopilotSettings.developerPrompt : prompt)
-        }
-    }
-    func testVersionSixLoadsInstalledWhisperAtLaunch() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let store = SettingsManager(url: directory.appendingPathComponent("settings.json"))
-        try JSONSerialization.data(withJSONObject: ["schemaVersion": 5, "autoLoadWhisper": false, "whisperVariant": "openai_whisper-small", "modelPath": "/tmp/openai_whisper-large-v3-v20240930_turbo", "model": "qwen3.5:9b"]).write(to: store.url)
-        let result = try store.load()
-        XCTAssertEqual(result.schemaVersion, 9)
-        XCTAssertTrue(result.autoLoadWhisper)
-        XCTAssertEqual(result.whisperVariant, "openai_whisper-large-v3-v20240930_turbo")
-        XCTAssertEqual(result.model, "qwen3.5:9b")
-    }
-    func testVersionSevenUpdatesOnlyDefaultPrompt() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let store = SettingsManager(url: directory.appendingPathComponent("settings.json"))
-        let previous = CopilotSettings.promptV7.replacingOccurrences(of: " Не називай callback суто синхронним або суто асинхронним: спосіб виклику визначає код, що його приймає.", with: "")
-        try JSONSerialization.data(withJSONObject: ["schemaVersion": 6, "systemPrompt": previous]).write(to: store.url)
-        XCTAssertEqual(try store.load().systemPrompt, CopilotSettings.developerPrompt)
-        try JSONSerialization.data(withJSONObject: ["schemaVersion": 6, "systemPrompt": "Мій власний стиль"]).write(to: store.url)
-        XCTAssertEqual(try store.load().systemPrompt, "Мій власний стиль")
     }
     func testVADSilenceNeverCreatesChunks() {
         var buffer = AudioBufferManager(); let settings = CopilotSettings()
