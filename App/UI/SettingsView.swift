@@ -53,6 +53,7 @@ struct SettingsView: View {
                             Text("Енергетичний VAD, перекриття 0.5 с, не більше одного проміжного розпізнавання на вікно. Змінюйте, коли запис зупинено.").font(.caption).foregroundStyle(.secondary)
                         }.disabled(model.running || model.starting || model.modelBusy || diagnostics.testing)
                     case "AI Models":
+                        Section("Claude") { ClaudeSection(model: model) }
                         Section("Ollama · 127.0.0.1:11434") {
                             Picker("Модель", selection: $model.settings.model) { ForEach(model.models) { Text($0.name + " · " + String(format: "%.1f GB", Double($0.size) / 1e9)).tag($0.name) }; if !model.models.contains(where: { $0.name == model.settings.model }) { Text(model.settings.model).tag(model.settings.model) } }
                             Button("Оновити список моделей") { Task { await model.refreshModels() } }

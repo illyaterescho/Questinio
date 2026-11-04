@@ -5,7 +5,9 @@
 Free, local-first AI meeting assistant for macOS (Apple Silicon, macOS 14+).
 It transcribes a call or your microphone on-device, detects questions, and
 streams answers from a local LLM, optionally grounded in a code folder you pick.
-No cloud APIs, no accounts, no subscription.
+Free and fully local by default. Add your own Anthropic API key to answer with
+Claude Haiku instead: then conversation text, code fragments and OCR go to Anthropic
+(screenshots only if you enable them; audio always stays on the Mac).
 
 > Source folder, Xcode scheme and Swift module still use the old name
 > `LocalCopilot` for compatibility.
@@ -23,7 +25,9 @@ No cloud APIs, no accounts, no subscription.
 - **Question inbox**: detects finished questions after a pause, keeps the
   conversation context at the moment each question was asked, tracks
   interrupted or rephrased questions.
-- **Local answers**: Ollama (`/api/chat`, streaming). Thinking models supported.
+- **Answers**: local Ollama (`/api/chat`, streaming), or Claude Haiku 5.5 with your
+  own key. The key is stored only in the macOS Keychain; a daily spend limit applies.
+  Set it in the **AI model** chip of the command bar or in Settings → AI Models.
 - **Code context**: connect a project folder; relevant fragments with exact line
   numbers are sent with code questions ("what does line 129 do?", "where is X
   defined?"). Optional JetBrains editor reading via Accessibility.

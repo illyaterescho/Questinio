@@ -62,7 +62,7 @@ public struct SessionContext: Sendable {
     }
     public func messages(prompt: String, history: [ChatMessage], question: String, code: String, topic: String, budget: Int, includeConversation: Bool = true) -> [ChatMessage] {
         let budget = max(1024, budget)
-        let system = String(prompt.prefix(min(2000, budget / 4)))
+        let system = String(prompt.prefix(min(1400, budget / 2)))
         let question = String(question.suffix(min(8000, budget / 4)))
         var left = budget - system.count - question.count - 100
         var blocks: [String] = []

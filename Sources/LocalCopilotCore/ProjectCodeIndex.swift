@@ -154,7 +154,7 @@ public struct ProjectCodeIndex: Sendable {
             var block = "Файл: \(file.path) · повний файл має \(lines.count) рядків. "
             if local, file.path == active, let focusLine {
                 block += "Поточна позиція: рядок \(focusLine). "
-                if let focusedSymbol, !focusedSymbol.isEmpty { block += "Активний символ WebStorm: \(focusedSymbol). " }
+                if let focusedSymbol, !focusedSymbol.isEmpty { block += "Активний символ IDE: \(focusedSymbol). " }
             }
             block += "Фрагменти з точними номерами:\n"
             let order = line.map { target in numbers.sorted { abs($0 - target) < abs($1 - target) } } ?? numbers.sorted()

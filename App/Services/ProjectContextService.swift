@@ -100,9 +100,10 @@ import LocalCopilotCore
         status = "\(files.count) файлів · " + (selectedFile.isEmpty ? "пошук по всій папці" : "відкрито: " + selectedFile)
         return result
     }
-    func openSelectedInWebStorm() {
+    func openSelectedInIDE() {
         let file = followEditor ? (matches.first ?? (selectedFile.isEmpty ? nil : selectedFile)) : (selectedFile.isEmpty ? matches.first : selectedFile)
-        guard let file, let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.jetbrains.WebStorm") else { return }
+        let ide = NSWorkspace.shared.runningApplications.first { JetBrainsIDE.matches($0.bundleIdentifier) }?.bundleURL
+        guard let file, let app = ide ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.jetbrains.WebStorm") else { return }
         let url = URL(fileURLWithPath: rootPath).appendingPathComponent(file)
         NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
     }

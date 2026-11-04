@@ -13,7 +13,7 @@ struct EditorSnapshot {
 }
 @MainActor final class IDEContextService: ObservableObject {
     @Published var enabled = false
-    @Published var status = "WebStorm: точне читання вимкнено"
+    @Published var status = "IDE: точне читання вимкнено"
     @Published var file = ""
     @Published var cursorLine: Int?
     var onEnabledChanged: ((Bool) -> Void)?
@@ -26,7 +26,7 @@ struct EditorSnapshot {
             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") { NSWorkspace.shared.open(url) }
         }
     }
-    func disable() { enabled = false; file = ""; cursorLine = nil; status = "WebStorm: точне читання вимкнено"; onEnabledChanged?(false) }
+    func disable() { enabled = false; file = ""; cursorLine = nil; status = "IDE: точне читання вимкнено"; onEnabledChanged?(false) }
     private func attribute(_ element: AXUIElement, _ key: String) -> CFTypeRef? {
         var value: CFTypeRef?; guard AXUIElementCopyAttributeValue(element, key as CFString, &value) == .success else { return nil }; return value
     }
@@ -34,10 +34,12 @@ struct EditorSnapshot {
     func snapshot(root: String) -> EditorSnapshot? {
         guard enabled else { return nil }
         guard AXIsProcessTrusted() else { status = "Questionio не має дозволу Accessibility"; return nil }
-        guard let running = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == "com.jetbrains.WebStorm" }) else { status = "WebStorm не запущено"; return nil }
+        let ides = NSWorkspace.shared.runningApplications.filter { JetBrainsIDE.matches($0.bundleIdentifier) }
+        guard let running = ides.first(where: \.isActive) ?? ides.first else { status = "JetBrains IDE не запущено"; return nil }
+        let ideName = running.localizedName ?? "IDE"
         let app = AXUIElementCreateApplication(running.processIdentifier)
         AXUIElementSetMessagingTimeout(app, 0.2)
-        guard let value = attribute(app, kAXFocusedWindowAttribute), CFGetTypeID(value) == AXUIElementGetTypeID() else { status = "У WebStorm немає відкритого вікна"; return nil }
+        guard let value = attribute(app, kAXFocusedWindowAttribute), CFGetTypeID(value) == AXUIElementGetTypeID() else { status = "У \(ideName) немає відкритого вікна"; return nil }
         let window = unsafeBitCast(value, to: AXUIElement.self)
         let title = string(window, kAXTitleAttribute)
         let start = Date(); var queue: [AXUIElement] = [window]; var offset = 0
@@ -46,7 +48,7 @@ struct EditorSnapshot {
             let candidate = unsafeBitCast(focused, to: AXUIElement.self)
             if string(candidate, kAXDescriptionAttribute).contains("Editor for") { editor = candidate }
         }
-        // Only inspect the focused WebStorm window. Prune its project tree and
+        // Only inspect the focused IDE window. Prune its project tree and
         // other tool windows; never traverse other applications or perform AX writes.
         while offset < queue.count && offset < 400 && Date().timeIntervalSince(start) < 1.5 {
             let element = queue[offset]; offset += 1
@@ -63,7 +65,7 @@ struct EditorSnapshot {
             if description.contains("Project Tool Window") || description.contains("Project structure tree") || description.contains("Action Toolbar") { continue }
             if let children = attribute(element, kAXChildrenAttribute) as? [AXUIElement] { queue.append(contentsOf: children) }
         }
-        guard let editor else { status = "Відкрийте текстовий файл у редакторі WebStorm"; return nil }
+        guard let editor else { status = "Відкрийте текстовий файл у редакторі \(ideName)"; return nil }
         let editorName = string(editor, kAXDescriptionAttribute).replacingOccurrences(of: "Editor for ", with: "")
         let text = string(editor, kAXValueAttribute)
         guard text.utf8.count <= 2_000_000 else { status = "Відкритий файл завеликий (понад 2 MB)"; return nil }
@@ -94,16 +96,16 @@ struct EditorSnapshot {
             Array(breadcrumb.prefix(index + 1)) == Array(rootComponents.suffix(index + 1))
         }
         guard let rootIndex else {
-            status = "WebStorm: відкрийте файл із вибраної папки \(rootURL.lastPathComponent)"
+            status = "\(ideName): відкрийте файл із вибраної папки \(rootURL.lastPathComponent)"
             return nil
         }
         let fileIndex = breadcrumb.firstIndex { ProjectCodeIndex.extensions.contains(URL(fileURLWithPath: $0).pathExtension.lowercased()) }
         let matchesEditor = fileIndex.map { breadcrumb[$0] == editorName } ?? false
         let relative = matchesEditor && fileIndex != nil && fileIndex! > rootIndex ? breadcrumb[(rootIndex + 1)...fileIndex!].joined(separator: "/") : nil
-        guard relative != nil else { status = "WebStorm: відкрийте файл із вибраної папки \(rootURL.lastPathComponent)"; return nil }
+        guard relative != nil else { status = "\(ideName): відкрийте файл із вибраної папки \(rootURL.lastPathComponent)"; return nil }
         let symbol = matchesEditor ? fileIndex.flatMap { index in index + 1 < breadcrumb.count ? breadcrumb[(index + 1)...].joined(separator: " / ") : nil } : nil
         file = relative ?? title; cursorLine = line
-        status = "WebStorm: \(file)\(symbol.map { " · \($0)" } ?? "")\(visibleLine.map { " · видно біля рядка \($0)" } ?? line.map { " · курсор: рядок \($0)" } ?? "") · точний текст редактора"
+        status = "\(ideName): \(file)\(symbol.map { " · \($0)" } ?? "")\(visibleLine.map { " · видно біля рядка \($0)" } ?? line.map { " · курсор: рядок \($0)" } ?? "") · точний текст редактора"
         return EditorSnapshot(window: title, relativePath: relative, text: text, cursorLine: line, visibleLine: visibleLine, symbol: symbol)
     }
 }

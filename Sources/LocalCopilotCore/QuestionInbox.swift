@@ -112,7 +112,8 @@ public struct QuestionInbox: Sendable {
     // question only when its last fragment is complete and no longer changing.
     public mutating func settle(at date: Date = Date(), force: Bool = false) -> [Entry] {
         for i in entries.indices where entries[i].state == .draft && entries[i].final {
-            if (force || date.timeIntervalSince(entries[i].updated) >= 1.4) && !Self.incomplete(entries[i].text) { entries[i].state = .ready }
+            let grace = Self.vagueReference(entries[i].text) ? 2.6 : 1.4
+            if (force || date.timeIntervalSince(entries[i].updated) >= grace) && !Self.incomplete(entries[i].text) { entries[i].state = .ready }
         }
         var result: [Entry] = []
         for i in entries.indices where entries[i].state == .ready && entries[i].publishedRevision != entries[i].revision {
@@ -187,14 +188,29 @@ public struct QuestionInbox: Sendable {
     }
     private static func continues(_ text: String) -> Bool {
         let s = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        return ["якщо ", "а якщо ", "коли ", "а саме ", "тобто ", "і чому ", "та чому ", "для випадку ", "за умови ", "щоб "].contains(where: s.hasPrefix)
+        if ["якщо ", "а якщо ", "коли ", "а саме ", "тобто ", "і чому ", "та чому ", "для випадку ", "за умови ", "щоб "].contains(where: s.hasPrefix) { return true }
+        // “в 5 рядку”, “на графіку”: a short prepositional tail of the previous question.
+        let words = s.split(whereSeparator: \.isWhitespace)
+        guard (2...4).contains(words.count), let first = words.first, ["в", "у", "на", "по", "про", "з", "із", "від", "до", "для", "за", "над", "під"].contains(String(first)) else { return false }
+        return !QuestionDetectionService.isQuestion(s.replacingOccurrences(of: "?", with: ""))
+    }
+    /// “А що означають оці” usually goes on after a breath, so give it longer to settle.
+    private static func vagueReference(_ text: String) -> Bool {
+        let s = text.lowercased()
+        guard s.rangeOfCharacter(from: .decimalDigits) == nil, ProjectCodeIndex.namedSymbol(text) == nil else { return false }
+        let words = s.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
+        return words.suffix(2).contains { ["оці", "цей", "ця"].contains($0) }
     }
     public static func incomplete(_ text: String) -> Bool {
         let s = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         if s.hasSuffix("...") || s.hasSuffix("…") { return true }
         let words = s.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
         guard let last = words.last else { return true }
-        return ["на", "та", "і", "або", "якщо", "для", "тому", "що", "як", "чому", "який", "яка", "які", "ми", "у", "в", "це", "цей", "цю", "тут", "таке"].contains(last)
+        if ["на", "та", "і", "або", "якщо", "для", "тому", "що", "як", "чому", "який", "яка", "які", "ми", "у", "в", "це", "цей", "цю", "тут", "таке"].contains(last) { return true }
+        // Fillers and hanging words; an explicit question mark means the speaker finished.
+        if s.hasSuffix("?") { return false }
+        if last == "значить" { return !words.contains("що") }
+        return ["ну", "типу", "е", "ем", "по", "про", "з", "від", "до", "оці", "ці"].contains(last)
     }
     private static func replacementCue(_ text: String) -> (tail: String, signature: String, reformulation: Bool, head: String)? {
         let pattern = #"(?i)(?:\bстоп\b(?:[,!:\s.]+|$)|\b(?:ні|нет)[,\s]+(?:краще|точніше|давайте інше)[,\s:]*|\bпереформулюю\b[,\s:]*|\bінше питання\b[,\s:]*|\bкраще\s+(?:про\s+)?інше\b[,\s:]*|\bдавайте інше\b[,\s:]*|\bзабудьте попереднє\b[,\s:]*|\bне відповідайте\b[,\s:]*|\bточніше\b[,\s:]*)"#
@@ -227,8 +243,9 @@ public struct DialogueIntentDecision: Decodable, Sendable {
     public let action: Action
     public let evidence: String
     public static func parse(_ text: String) throws -> Self {
-        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var value = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard value.utf8.count < 6000 else { throw CopilotError.message("Dialogue decision too long") }
+        if let open = value.firstIndex(of: "{"), let close = value.lastIndex(of: "}"), open < close { value = String(value[open...close]) }
         return try JSONDecoder().decode(Self.self, from: Data(value.utf8))
     }
 }

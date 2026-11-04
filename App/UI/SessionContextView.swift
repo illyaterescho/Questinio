@@ -79,7 +79,7 @@ struct ProjectContextView: View {
                 HStack {
                     Text("Пошук по всіх файлах папки").font(.caption).foregroundStyle(.secondary)
                     Spacer()
-                    Button("Відкрити знайдене у WebStorm") { project.openSelectedInWebStorm() }.disabled(project.matches.isEmpty)
+                    Button("Відкрити знайдене в IDE") { project.openSelectedInIDE() }.disabled(project.matches.isEmpty)
                 }
                 if !project.selectedFile.isEmpty { Text("Зараз відкрито: " + project.selectedFile).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
                 Text("Questionio шукає потрібний код у всій папці й передає моделі релевантні рядки. Збережіть зміни в IDE, щоб оновився індекс.").font(.caption).foregroundStyle(.secondary)
@@ -94,7 +94,7 @@ struct IDEContextView: View {
     var body: some View {
         HStack {
             Text(editor.status).font(.caption).foregroundStyle(.secondary).lineLimit(1).help(editor.status)
-            Button(editor.enabled ? "Вимкнути WebStorm" : "Читати WebStorm…") { if editor.enabled { editor.disable() } else { editor.enable() } }.controlSize(.small)
+            Button(editor.enabled ? "Вимкнути IDE" : "Читати JetBrains IDE…") { if editor.enabled { editor.disable() } else { editor.enable() } }.controlSize(.small)
         }
     }
 }

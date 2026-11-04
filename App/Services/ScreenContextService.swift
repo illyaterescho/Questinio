@@ -77,6 +77,7 @@ struct CodeWindow: Identifiable, Hashable { let id: UInt32; let title: String }
         }
         panel.contentView = view; selectionPanel = panel; panel.makeKeyAndOrderFront(nil); panel.makeFirstResponder(view)
     }
+    var hasSource: Bool { selectedWindow != 0 || region != nil }
     func refreshForAnswer() async {
         while busy {
             do { try await Task.sleep(for: .milliseconds(100)) } catch { return }

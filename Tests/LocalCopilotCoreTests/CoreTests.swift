@@ -66,7 +66,7 @@ final class CoreTests: XCTestCase {
         let result = index.search(question: "Що робить ця функція тут?", active: "lab-03/source.ts", focusLine: 87, focusedSymbol: "calculateTotal(), function")
         XCTAssertEqual(result.files, ["lab-03/source.ts"])
         XCTAssertTrue(result.context.contains("87: function calculateTotal()"))
-        XCTAssertTrue(result.context.contains("Активний символ WebStorm: calculateTotal()"))
+        XCTAssertTrue(result.context.contains("Активний символ IDE: calculateTotal()"))
         XCTAssertFalse(result.context.contains("\n1: const item1"))
     }
     func testNamedFunctionOverridesCursorInOpenFile() {
@@ -78,7 +78,7 @@ final class CoreTests: XCTestCase {
         let result = index.search(question: question, active: path, focusLine: 1, focusedSymbol: "unrelatedItem1")
         XCTAssertEqual(result.files, [path])
         XCTAssertTrue(result.context.contains("129: function getUserByID"))
-        XCTAssertFalse(result.context.contains("Активний символ WebStorm: unrelatedItem1"))
+        XCTAssertFalse(result.context.contains("Активний символ IDE: unrelatedItem1"))
     }
     func testDirectFunctionQuestionUsesDefinitionInsteadOfCallSites() {
         let index = ProjectCodeIndex(files: [
@@ -311,6 +311,138 @@ final class CoreTests: XCTestCase {
         try store.save(settings); XCTAssertEqual(try store.load(), settings)
         try Data("broken".utf8).write(to: store.url); XCTAssertThrowsError(try store.load())
     }
+    func testProgramOutputQuestionsRouteToCodeButConceptsDoNot() {
+        for question in ["Що відбувається в програмі далі?", "Де обчислюється середнє?", "Де розраховано дисперсію?", "Звідки і де береться ця вибірка?", "Що виводить програма?", "Скільки відхилили гіпотез?"] {
+            XCTAssertTrue(CodeQuestionRouter.needsCode(question), question)
+        }
+        XCTAssertFalse(CodeQuestionRouter.needsCode("Що таке кореляція?"))
+        XCTAssertFalse(CodeQuestionRouter.needsCode("Яка кореляція між ознаками?"))
+    }
+    func testVisualQuestionsAreDetected() {
+        for question in ["Що показує цей графік?", "Чому діаграма така?", "Опишіть гістограму", "Куди йде крива?", "Що це за лінія?", "Якого кольору стовпці?", "Що на осі X?", "Що в легенді?"] {
+            XCTAssertTrue(VisualQuestionRouter.isVisual(question), question)
+        }
+        for question in ["Що таке дисперсія?", "Який код на цьому рядку?", "Чому код кривий?", "Як працює функція?"] {
+            XCTAssertFalse(VisualQuestionRouter.isVisual(question), question)
+        }
+    }
+    func testFullPromptSurvivesSmallBudget() {
+        XCTAssertLessThanOrEqual(CopilotSettings.developerPrompt.count, 1400)
+        let messages = SessionContext().messages(prompt: CopilotSettings.developerPrompt, history: [], question: "Що таке кеш?", code: "", topic: "", budget: 3200)
+        XCTAssertEqual(messages[0].content, CopilotSettings.developerPrompt)
+        XCTAssertTrue(messages[0].content.contains("не бачиш"))
+    }
+    func testPromptMigrationToV8KeepsCustomPrompts() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let store = SettingsManager(url: directory.appendingPathComponent("settings.json"))
+        try JSONSerialization.data(withJSONObject: ["schemaVersion": 7, "systemPrompt": CopilotSettings.promptV7]).write(to: store.url)
+        XCTAssertEqual(try store.load().systemPrompt, CopilotSettings.developerPrompt)
+        XCTAssertEqual(try store.load().schemaVersion, 8)
+        try JSONSerialization.data(withJSONObject: ["schemaVersion": 7, "systemPrompt": "Мій промпт"]).write(to: store.url)
+        XCTAssertEqual(try store.load().systemPrompt, "Мій промпт")
+    }
+    func testFillersAndHangingWordsAreIncomplete() {
+        for text in ["Що означають оці", "Чому ви взяли ці", "Розкажіть про", "Що ви отримали від", "Ну як воно, типу", "А ну"] { XCTAssertTrue(QuestionInbox.incomplete(text), text) }
+        for text in ["Що це значить", "Чому саме ці?", "Що означає дисперсія"] { XCTAssertFalse(QuestionInbox.incomplete(text), text) }
+    }
+    func testShortPrepositionalTailJoinsPreviousQuestion() {
+        var inbox = QuestionInbox(); let now = Date()
+        inbox.observe("Що робить ця змінна", source: "S", utterance: UUID(), final: true, context: SessionContext(), at: now)
+        inbox.observe("в 5 рядку?", source: "S", utterance: UUID(), final: true, context: SessionContext(), at: now.addingTimeInterval(1))
+        XCTAssertEqual(inbox.entries.count, 1)
+        XCTAssertEqual(inbox.entries[0].text, "Що робить ця змінна в 5 рядку?")
+        inbox.observe("В чому різниця між ними?", source: "S", utterance: UUID(), final: true, context: SessionContext(), at: now.addingTimeInterval(2))
+        XCTAssertEqual(inbox.entries.count, 2)
+    }
+    func testVagueReferenceWaitsLongerBeforeSettling() {
+        var inbox = QuestionInbox(); let now = Date()
+        inbox.observe("Що показує ця", source: "S", utterance: UUID(), final: true, context: SessionContext(), at: now)
+        XCTAssertTrue(inbox.settle(at: now.addingTimeInterval(1.5)).isEmpty)
+        XCTAssertEqual(inbox.settle(at: now.addingTimeInterval(2.7)).count, 1)
+        var plain = QuestionInbox()
+        plain.observe("Що таке кеш?", source: "S", utterance: UUID(), final: true, context: SessionContext(), at: now)
+        XCTAssertEqual(plain.settle(at: now.addingTimeInterval(1.5)).count, 1)
+    }
+    func testAnyJetBrainsIDEMatchesExceptToolbox() {
+        for id in ["com.jetbrains.WebStorm", "com.jetbrains.pycharm", "com.jetbrains.pycharm.ce", "com.jetbrains.intellij"] { XCTAssertTrue(JetBrainsIDE.matches(id), id) }
+        for id in ["com.jetbrains.toolbox", "com.microsoft.VSCode"] { XCTAssertFalse(JetBrainsIDE.matches(id), id) }
+        XCTAssertFalse(JetBrainsIDE.matches(nil))
+    }
+    func testClaudeDefaultsUseHaikuAndNoKeyInSettings() throws {
+        let settings = CopilotSettings()
+        XCTAssertEqual(settings.answerBackend, "claude"); XCTAssertEqual(settings.backgroundBackend, "claude")
+        XCTAssertEqual(settings.claudeModel, "claude-haiku-5-5"); XCTAssertFalse(settings.claudeSendScreenshots)
+        let json = String(decoding: try JSONEncoder().encode(settings), as: UTF8.self)
+        XCTAssertFalse(json.lowercased().contains("apikey")); XCTAssertFalse(json.contains("sk-ant"))
+    }
+    func testClaudeRequestBodyShape() throws {
+        var settings = CopilotSettings(); settings.temperature = 0.3
+        let messages = [ChatMessage(role: "system", content: "Правила"), ChatMessage(role: "user", content: "Раніше"), ChatMessage(role: "assistant", content: "Так"), ChatMessage(role: "user", content: "Питання")]
+        let body = ClaudeRequest.body(messages: messages, settings: settings, images: ["QUJD"], formatJSON: false)
+        XCTAssertEqual(body["model"] as? String, "claude-haiku-5-5"); XCTAssertEqual(body["system"] as? String, "Правила")
+        XCTAssertEqual(body["stream"] as? Bool, true); XCTAssertEqual(body["max_tokens"] as? Int, 8192); XCTAssertNil(body["temperature"])
+        XCTAssertEqual((body["thinking"] as? [String: String])?["type"], "disabled")
+        let turns = try XCTUnwrap(body["messages"] as? [[String: Any]])
+        XCTAssertEqual(turns.count, 3); XCTAssertFalse(turns.contains { $0["role"] as? String == "system" })
+        XCTAssertEqual(turns[0]["content"] as? String, "Раніше")
+        let blocks = try XCTUnwrap(turns[2]["content"] as? [[String: Any]])
+        XCTAssertEqual(blocks[0]["type"] as? String, "image"); XCTAssertEqual(blocks[1]["text"] as? String, "Питання")
+        XCTAssertTrue(JSONSerialization.isValidJSONObject(body))
+        let classifier = ClaudeRequest.body(messages: messages, settings: settings, images: [], formatJSON: true)
+        XCTAssertTrue((classifier["system"] as? String)?.contains("JSON") == true)
+        XCTAssertEqual((classifier["output_config"] as? [String: String])?["effort"], "low")
+    }
+    func testClaudeStreamParsing() throws {
+        var parser = ClaudeStreamParser()
+        XCTAssertNil(try parser.parse("event: message_start"))
+        XCTAssertNil(try parser.parse(#"data: {"type":"message_start","message":{"usage":{"input_tokens":120,"cache_read_input_tokens":5}}}"#))
+        XCTAssertNil(try parser.parse(#"data: {"type":"ping"}"#))
+        XCTAssertEqual(try parser.parse(#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Привіт"}}"#)?.message?.content, "Привіт")
+        XCTAssertEqual(parser.billableOutput, 2)
+        XCTAssertEqual(try parser.parse(#"data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"гм"}}"#)?.message?.thinking, "гм")
+        XCTAssertNil(try parser.parse(#"data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":40}}"#))
+        let done = try XCTUnwrap(parser.parse(#"data: {"type":"message_stop"}"#))
+        XCTAssertEqual(done.done, true); XCTAssertEqual(done.done_reason, "length")
+        XCTAssertEqual(parser.inputTokens, 125); XCTAssertEqual(parser.billableOutput, 40); XCTAssertTrue(parser.finished)
+    }
+    func testClaudeStreamErrorsAndRefusalThrow() {
+        var failing = ClaudeStreamParser()
+        XCTAssertThrowsError(try failing.parse(#"data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#))
+        var refused = ClaudeStreamParser()
+        XCTAssertNil(try refused.parse(#"data: {"type":"message_delta","delta":{"stop_reason":"refusal"},"usage":{"output_tokens":1}}"#))
+        XCTAssertThrowsError(try refused.parse(#"data: {"type":"message_stop"}"#))
+        XCTAssertTrue(ClaudeRequest.failure(status: 401, body: "").contains("ключ"))
+        XCTAssertTrue(ClaudeRequest.failure(status: 400, body: #"{"error":{"message":"bad field"}}"#).contains("bad field"))
+    }
+    func testSpendLedgerPricesAndResetsDaily() {
+        XCTAssertEqual(SpendLedger.cost(input: 100_000, output: 100_000), 0.06, accuracy: 1e-9)
+        XCTAssertEqual(SpendLedger.cost(input: 200_000, output: 0), 0.10, accuracy: 1e-9) // large-prompt rate
+        var ledger = SpendLedger()
+        ledger.add(input: 100_000, output: 0, day: "2026-11-04"); ledger.add(input: 0, output: 100_000, day: "2026-11-04")
+        XCTAssertEqual(ledger.spent(on: "2026-11-04"), 0.06, accuracy: 1e-9)
+        XCTAssertEqual(ledger.spent(on: "2026-11-05"), 0)
+        ledger.add(input: 100_000, output: 0, day: "2026-11-05")
+        XCTAssertEqual(ledger.usd, 0.01, accuracy: 1e-9); XCTAssertEqual(ledger.outputTokens, 0)
+    }
+    func testClaudeServiceRefusesWithoutKeyOrOverLimit() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let keychain = KeychainStore(service: "QuestionioTests-" + UUID().uuidString)
+        defer { try? keychain.delete() }
+        let spend = SpendTracker(url: directory.appendingPathComponent("spend.json"))
+        let service = ClaudeService(keychain: keychain, spend: spend)
+        var settings = CopilotSettings(); settings.claudeDailyLimitUSD = 0.05
+        do { try await service.chat(messages: [ChatMessage(role: "user", content: "x")], settings: settings, images: [], formatJSON: false) { _ in }; XCTFail("Expected missing key") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("Ключ Claude не задано")) }
+        try keychain.save("test-key"); XCTAssertEqual(try keychain.read(), "test-key")
+        try keychain.save("test-key-2"); XCTAssertEqual(try keychain.read(), "test-key-2")
+        await spend.record(input: 1_000_000, output: 0)
+        do { try await service.chat(messages: [ChatMessage(role: "user", content: "x")], settings: settings, images: [], formatJSON: false) { _ in }; XCTFail("Expected limit") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("денний ліміт")) }
+        try keychain.delete(); XCTAssertNil(try keychain.read())
+    }
     func testSavedSettingsWithoutEngineKeepWhisperAndParakeetPersists() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -360,7 +492,7 @@ final class CoreTests: XCTestCase {
         for prompt in [CopilotSettings.legacyDeveloperPrompt, "My custom concise prompt"] {
             try JSONSerialization.data(withJSONObject: ["schemaVersion": 2, "systemPrompt": prompt, "applicationID": "com.apple.QuickTimePlayerX", "microphoneID": 100, "maxTokens": -1]).write(to: store.url)
             let result = try store.load()
-            XCTAssertEqual(result.schemaVersion, 7)
+            XCTAssertEqual(result.schemaVersion, 8)
             XCTAssertEqual(result.systemPrompt, prompt == CopilotSettings.legacyDeveloperPrompt ? CopilotSettings.developerPrompt : prompt)
             XCTAssertEqual(result.applicationID, "com.apple.QuickTimePlayerX"); XCTAssertEqual(result.microphoneID, 100); XCTAssertEqual(result.maxTokens, -1)
         }
@@ -373,7 +505,7 @@ final class CoreTests: XCTestCase {
         for prompt in [CopilotSettings.legacyConcisePrompt, "My custom prompt v3"] {
             try JSONSerialization.data(withJSONObject: ["schemaVersion": 3, "systemPrompt": prompt]).write(to: store.url)
             let result = try store.load()
-            XCTAssertEqual(result.schemaVersion, 7)
+            XCTAssertEqual(result.schemaVersion, 8)
             XCTAssertEqual(result.systemPrompt, prompt == CopilotSettings.legacyConcisePrompt ? CopilotSettings.developerPrompt : prompt)
         }
     }
@@ -384,7 +516,7 @@ final class CoreTests: XCTestCase {
         let store = SettingsManager(url: directory.appendingPathComponent("settings.json"))
         try JSONSerialization.data(withJSONObject: ["schemaVersion": 5, "autoLoadWhisper": false, "whisperVariant": "openai_whisper-small", "modelPath": "/tmp/openai_whisper-large-v3-v20240930_turbo", "model": "qwen3.5:9b"]).write(to: store.url)
         let result = try store.load()
-        XCTAssertEqual(result.schemaVersion, 7)
+        XCTAssertEqual(result.schemaVersion, 8)
         XCTAssertTrue(result.autoLoadWhisper)
         XCTAssertEqual(result.whisperVariant, "openai_whisper-large-v3-v20240930_turbo")
         XCTAssertEqual(result.model, "qwen3.5:9b")
@@ -394,7 +526,7 @@ final class CoreTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let store = SettingsManager(url: directory.appendingPathComponent("settings.json"))
-        let previous = CopilotSettings.developerPrompt.replacingOccurrences(of: " Не називай callback суто синхронним або суто асинхронним: спосіб виклику визначає код, що його приймає.", with: "")
+        let previous = CopilotSettings.promptV7.replacingOccurrences(of: " Не називай callback суто синхронним або суто асинхронним: спосіб виклику визначає код, що його приймає.", with: "")
         try JSONSerialization.data(withJSONObject: ["schemaVersion": 6, "systemPrompt": previous]).write(to: store.url)
         XCTAssertEqual(try store.load().systemPrompt, CopilotSettings.developerPrompt)
         try JSONSerialization.data(withJSONObject: ["schemaVersion": 6, "systemPrompt": "Мій власний стиль"]).write(to: store.url)

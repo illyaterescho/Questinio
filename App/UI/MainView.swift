@@ -114,7 +114,7 @@ struct LiveView: View {
         return result
     }
     private var engineName: String { model.settings.speechEngine == "parakeet" ? "Parakeet v3" : "Whisper" }
-    private var activeModel: String { model.settings.fastAnswers && model.models.contains(where: { $0.name == model.settings.fastModel }) ? model.settings.fastModel : model.settings.model }
+    private var activeModel: String { model.answersUseClaude ? "Haiku 5.5" : model.settings.fastAnswers && model.models.contains(where: { $0.name == model.settings.fastModel }) ? model.settings.fastModel : model.settings.model }
     var body: some View {
         VStack(spacing: UI.gap) {
             controlBar
@@ -232,7 +232,10 @@ struct ModelPanel: View {
     @ObservedObject var model: ConversationManager
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Модель AI · Ollama").font(.headline)
+            Text("Модель AI").font(.headline)
+            ClaudeSection(model: model)
+            Divider()
+            Text("Ollama · локально").font(.subheadline.weight(.semibold))
             if model.models.isEmpty { Text("Ollama не знайдено або моделі не встановлені.").font(.caption).foregroundStyle(.secondary) }
             else {
                 Picker("", selection: $model.settings.model) {
@@ -250,6 +253,36 @@ struct ModelPanel: View {
                 SettingsLink { Label("Контекст і промпт…", systemImage: "gearshape") }.buttonStyle(.link).font(.caption)
             }
         }
+    }
+}
+
+/// Where the Anthropic API key goes. The key is stored only in the macOS Keychain.
+struct ClaudeSection: View {
+    @ObservedObject var model: ConversationManager
+    @State private var key = ""
+    var body: some View {
+        VStack(alignment: .leading, spacing: UI.inner) {
+            Picker("Відповіді", selection: $model.settings.answerBackend) { Text("Claude Haiku").tag("claude"); Text("Ollama").tag("ollama") }.pickerStyle(.segmented)
+            Picker("Фон", selection: $model.settings.backgroundBackend) { Text("Claude Haiku").tag("claude"); Text("Ollama").tag("ollama") }.pickerStyle(.segmented)
+                .help("Класифікація реплік і стиснення пам’яті сесії")
+            if model.claudeKeyStored {
+                HStack {
+                    Label("Ключ збережено в Keychain", systemImage: "checkmark.seal.fill").font(.caption).foregroundStyle(.green)
+                    Spacer()
+                    Button("Видалити", role: .destructive) { model.deleteClaudeKey() }.glassButton().controlSize(.small)
+                }
+            } else {
+                HStack {
+                    SecureField("Ключ Anthropic: sk-ant-…", text: $key).textFieldStyle(.roundedBorder).onSubmit { model.saveClaudeKey(key); key = "" }
+                    Button("Зберегти") { model.saveClaudeKey(key); key = "" }.glassButton(prominent: true).disabled(key.isEmpty)
+                }
+                Text("Без ключа все працює локально через Ollama.").font(.caption).foregroundStyle(.secondary)
+            }
+            Stepper(String(format: "Денний ліміт: $%.2f", model.settings.claudeDailyLimitUSD), value: $model.settings.claudeDailyLimitUSD, in: 0.25...20, step: 0.25)
+            Text(String(format: "Витрачено сьогодні: $%.4f", model.claudeSpentToday)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+            Toggle("Слати скриншоти в Claude (для питань про графіки)", isOn: $model.settings.claudeSendScreenshots)
+            Text("З ключем в Anthropic ідуть текст розмови, фрагменти коду й OCR. Аудіо лишається на цьому Mac.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }.task { await model.refreshClaudeSpend() }
     }
 }
 

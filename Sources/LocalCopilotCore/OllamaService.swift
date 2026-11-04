@@ -21,6 +21,11 @@ public struct OllamaPacket: Decodable, Sendable {
     public let eval_duration: Int64?
     public let prompt_eval_count: Int?
     public let eval_count: Int?
+    public init(content: String? = nil, thinking: String? = nil, done: Bool? = nil, doneReason: String? = nil) {
+        message = content != nil || thinking != nil ? Message(content: content, thinking: thinking) : nil
+        self.done = done; done_reason = doneReason; error = nil
+        load_duration = nil; prompt_eval_duration = nil; eval_duration = nil; prompt_eval_count = nil; eval_count = nil
+    }
     public static func parse(_ line: String) throws -> OllamaPacket {
         guard line.utf8.count <= 1_000_000 else { throw CopilotError.message("Ollama packet exceeds limit") }
         let packet = try JSONDecoder().decode(Self.self, from: Data(line.utf8))
