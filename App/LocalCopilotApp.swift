@@ -42,6 +42,11 @@ final class CopilotPanel: NSPanel {
         model.togglePanel = { [weak self] in self?.togglePanel() }
         model.windowPreferencesChanged = { [weak self] in self?.applyPreferences() }
         model.resizePanel = { [weak self] extra in self?.resizePanel(by: extra) }
+        model.panelMinimumHeight = { [weak self] height in
+            guard let panel = self?.panel else { return }
+            panel.minSize.height = height
+            if panel.frame.height < height { self?.resizePanel(by: height - panel.frame.height) }
+        }
         let hotkeys = HotkeyManager(); self.hotkeys = hotkeys
         hotkeys.action = { [weak model] key in
             guard let model else { return }

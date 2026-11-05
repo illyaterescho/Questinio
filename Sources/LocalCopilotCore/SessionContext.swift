@@ -86,14 +86,15 @@ public struct SessionContext: Sendable {
         archived.removeFirst(snapshot.count)
     }
     /// `rules` are the app's own per-question instructions: they are never cut, unlike the user-editable `prompt`.
-    public func messages(prompt: String, rules: String = "", vacancy: String = "", history: [ChatMessage], question: String, code: String, topic: String, budget: Int, includeConversation: Bool = true) -> [ChatMessage] {
+    public func messages(prompt: String, rules: String = "", pinned: [(label: String, text: String)] = [], history: [ChatMessage], question: String, code: String, topic: String, budget: Int, includeConversation: Bool = true) -> [ChatMessage] {
         let budget = max(1024, budget)
         let prompt = String(prompt.prefix(min(1400, budget / 2)))
         let system = prompt + (rules.isEmpty ? "" : "\n" + rules)
         let question = String(question.suffix(min(8000, budget / 4)))
         // Rules and the job posting come on top of the budget, so they never squeeze out the conversation.
-        let vacancy = String(vacancy.prefix(2500))
-        var left = budget + vacancy.count + (vacancy.isEmpty ? 0 : 20) - prompt.count - question.count - 100
+        // Vacancy, CV and study materials: each up to 3000 characters, on top of the budget.
+        let pinned = pinned.map { ($0.label, String($0.text.prefix(3000))) }.filter { !$0.1.isEmpty }
+        var left = budget + pinned.reduce(0) { $0 + $1.0.count + $1.1.count + 2 } - prompt.count - question.count - 100
         var blocks: [String] = []
         func add(_ label: String, _ text: String, maximum: Int, tail: Bool = false) {
             guard !text.isEmpty, left > label.count + 4 else { return }
@@ -102,7 +103,7 @@ public struct SessionContext: Sendable {
             blocks.append(label + "\n" + value); left -= label.count + value.count + 2
         }
         // Even “що таке X?” in an interview is answered for this job, so the posting is not tied to the conversation.
-        add("Вакансія (дані):", vacancy, maximum: 2500)
+        for (label, text) in pinned { add(label, text, maximum: 3000) }
         if includeConversation { add("Тема / умови розмови (дані):", topic, maximum: 1200) }
         add("Показаний код / OCR екрана (дані):", code, maximum: max(0, left * 70 / 100))
         if includeConversation {

@@ -4,7 +4,11 @@ import LocalCopilotCore
     static func main() async {
         do {
             let args = CommandLine.arguments
-            if args.contains("--download") {
+            if let index = args.firstIndex(of: "--document"), args.count > index + 1 {
+                // Size and equation markers only, so a private document is not printed.
+                let text = try DocxText.text(fromDocx: URL(fileURLWithPath: args[index + 1]))
+                print("characters=\(text.count) fractions=\(text.components(separatedBy: ")/(").count - 1) powers=\(text.components(separatedBy: "^(").count - 1) roots=\(text.components(separatedBy: "√(").count - 1) passages=\(DocumentIndex(documents: [("d", text)]).passages.count)")
+            } else if args.contains("--download") {
                 let speech = SpeechRecognitionService()
                 let variant = args.firstIndex(of: "--variant").flatMap { args.count > $0 + 1 ? args[$0+1] : nil } ?? "openai_whisper-small"
                 print("Downloading \(variant)")

@@ -339,6 +339,10 @@ struct FloatingView: View {
     @ObservedObject var model: ConversationManager
     @State private var showSource = false
     private static let sourceHeight: CGFloat = 560
+    private var showsAnswer: Bool { !model.answer.isEmpty || model.generating || !model.question.isEmpty }
+    /// Bar, answer card with its question and a few lines of answer, and the ask field all fit; less than this
+    /// and SwiftUI cut the bar and the ask field off a 140-pt panel.
+    private var minimumHeight: CGFloat { (showsAnswer ? 400 : 140) + (showSource ? Self.sourceHeight : 0) }
     private var latest: String {
         if let entry = model.questionInbox.entries.last { return entry.text }
         return model.running ? "Слухаю…" : "Увімкніть «Авто» або запис"
@@ -353,15 +357,19 @@ struct FloatingView: View {
                 QuestionInboxView(model: model, compact: true).fixedSize()
                 AutoListenToggle(model: model)
                 AccentButton(title: "Відповісти") { model.generateManual() }.help("Відповісти на останнє питання (⌃⌥⌘G)")
-                IconButton(symbol: "slider.horizontal.3", help: "Звук, вікно й папка") { showSource.toggle(); model.resizePanel?(showSource ? Self.sourceHeight : -Self.sourceHeight) }
+                IconButton(symbol: "slider.horizontal.3", help: "Звук, вікно й папка") {
+                    // Lower the minimum first, or closing could not shrink the panel below it.
+                    if showSource { model.panelMinimumHeight?(minimumHeight - Self.sourceHeight) }
+                    showSource.toggle(); model.resizePanel?(showSource ? Self.sourceHeight : -Self.sourceHeight)
+                }
                 IconButton(symbol: model.settings.alwaysOnTop ? "pin.fill" : "pin", help: "Над усіма вікнами, зокрема повноекранними") { model.settings.alwaysOnTop.toggle() }
             }.padding(6).frame(height: UI.bar).glass(Capsule())
             // In the panel, not a popover: a popover belongs to the inactive app, so its controls ignore clicks.
             if showSource {
-                ScrollView { VStack(alignment: .leading, spacing: 14) { CodeSourceView(model: model); Divider(); CaptureSourceView(model: model) }.padding(14) }
+                ScrollView { VStack(alignment: .leading, spacing: 14) { CodeSourceView(model: model); Divider(); DocumentsView(library: model.documents); Divider(); CaptureSourceView(model: model) }.padding(14) }
                     .frame(height: Self.sourceHeight - UI.inner).glass(RoundedRectangle(cornerRadius: UI.radius, style: .continuous))
             }
-            if !model.answer.isEmpty || model.generating || !model.question.isEmpty {
+            if showsAnswer {
                 AnswerCard(model: model, compact: true).transition(.opacity.combined(with: .move(edge: .top)))
             }
             HStack(spacing: 8) {
@@ -370,10 +378,12 @@ struct FloatingView: View {
             }.padding(.leading, 16).padding(.trailing, 6).frame(height: 40).glass(Capsule(), interactive: true)
             if !model.error.isEmpty { Label(model.error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange).lineLimit(2).help(model.error).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8) }
             Spacer(minLength: 0)
-        }.padding(.horizontal, UI.inner).padding(.top, 28).padding(.bottom, UI.inner).frame(minWidth: 500, minHeight: 120)
+        }.padding(.horizontal, UI.inner).padding(.top, 28).padding(.bottom, UI.inner).frame(minWidth: 500, minHeight: 120, maxHeight: .infinity, alignment: .top)
+        .onAppear { model.panelMinimumHeight?(minimumHeight) }
+        .onChange(of: minimumHeight) { model.panelMinimumHeight?(minimumHeight) }
         .animation(.snappy, value: model.answer.isEmpty && !model.generating)
         // The frame is autosaved: shrink back before quitting so the next launch does not start oversized.
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in if showSource { showSource = false; model.resizePanel?(-Self.sourceHeight) } }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in if showSource { model.panelMinimumHeight?(minimumHeight - Self.sourceHeight); showSource = false; model.resizePanel?(-Self.sourceHeight) } }
         .ignoresSafeArea().appColorScheme(model.settings.appearance)
     }
 }
@@ -437,6 +447,33 @@ struct CodeSourceView: View {
     }
 }
 
+/// Study materials answers draw on: lab write-ups, explanations, notes.
+struct DocumentsView: View {
+    @ObservedObject var library: DocumentLibraryService
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Матеріали").font(.headline)
+                if library.busy { ProgressView().controlSize(.small) }
+                Spacer()
+                Button("Додати файли…") { library.add() }
+            }
+            if library.documents.isEmpty {
+                Text("Лабораторні, пояснення, конспекти (Word, PDF, текст). До питання додаються лише потрібні уривки.").font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(library.documents) { document in
+                HStack(spacing: 6) {
+                    Image(systemName: document.problem == nil ? "doc.text" : "exclamationmark.triangle").foregroundStyle(document.problem == nil ? Color.secondary : Color.orange)
+                    Text(document.name).lineLimit(1).truncationMode(.middle).help(document.path)
+                    Spacer()
+                    Text(document.problem ?? (document.characters == 0 ? "читаю…" : "\(document.characters) симв.")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Button { library.remove(document) } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.borderless).foregroundStyle(.secondary).help("Прибрати")
+                }
+            }
+        }
+    }
+}
+
 struct CaptureSourceView: View {
     private var ghostTitle: String {
         guard model.settings.privateWindow else { return "Ghost OFF" }
@@ -492,6 +529,13 @@ struct CaptureSourceView: View {
                 HStack(alignment: .top) {
                     TextField("Вакансія: вставте текст — кого шукають, стек, обов’язки, компанія", text: $model.settings.vacancy, axis: .vertical).lineLimit(3...8)
                     if !model.settings.vacancy.isEmpty { Button { model.settings.vacancy = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.borderless).foregroundStyle(.secondary).help("Очистити вакансію") }
+                }
+                HStack(alignment: .top) {
+                    TextField("Моє CV: досвід, проєкти, стек, освіта — лише з цього модель бере факти про вас", text: $model.settings.resume, axis: .vertical).lineLimit(3...8)
+                    VStack {
+                        Button { model.documents.importText { model.settings.resume = $0 } } label: { Image(systemName: "doc.badge.plus") }.buttonStyle(.borderless).help("Взяти CV з файлу (Word, PDF, текст)")
+                        if !model.settings.resume.isEmpty { Button { model.settings.resume = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.borderless).foregroundStyle(.secondary).help("Очистити CV") }
+                    }
                 }
             }
             Toggle("Записувати й мій мікрофон у режимі «Обидва»", isOn: $model.settings.captureMyVoice).disabled(locked)

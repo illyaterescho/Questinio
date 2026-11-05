@@ -102,6 +102,7 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
     private var memoryTask: Task<Void, Never>?
     let screen = ScreenContextService()
     let project = ProjectContextService()
+    let documents = DocumentLibraryService()
     let editor = IDEContextService()
     private var sessionContext = SessionContext()
     let diagnostics = DiagnosticsManager()
@@ -163,6 +164,7 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
     var windowPreferencesChanged: (() -> Void)?
     var togglePanel: (() -> Void)?
     var resizePanel: ((CGFloat) -> Void)?
+    var panelMinimumHeight: ((CGFloat) -> Void)?
     init(speech: SpeechRecognitionService = SpeechRecognitionService(), ollama: OllamaService = OllamaService(), settingsStore: SettingsManager = SettingsManager()) {
         self.speech = speech; self.ollama = ollama; self.settingsStore = settingsStore; let engine = SpeechEngineRouter(whisper: speech, parakeet: parakeet); self.engine = engine
         pipeline = SpeechPipeline(transcribe: { samples, language, vocabulary in try await engine.transcribe(samples, language: language, vocabulary: vocabulary) })
@@ -188,6 +190,8 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
             self?.settings.projectFolder = path; self?.lastProjectCode = ""
         }
         if !settings.projectFolder.isEmpty { project.connect(settings.projectFolder) }
+        documents.onPathsChanged = { [weak self] paths in self?.settings.documentPaths = paths }
+        documents.load(settings.documentPaths)
         refreshMicrophones()
         claudeKeyStored = (try? claude.keychain.read())?.isEmpty == false
         Task { await refreshClaudeSpend(); await refreshModels(); await refreshHistory(); await refreshApplications() }
@@ -610,6 +614,8 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
         let responseContext = context ?? sessionContext
         let journalSession = session
         let continuingCodeQuestion = lastQuestionUsedCode && useCode && !QuestionContextRouter.isSelfContained(input)
+        // “А чому?” has no words of its own to search the materials with: add the question it follows.
+        let materials = documents.index.context(for: QuestionContextRouter.isSelfContained(input) ? input : question + " " + input)
         lastQuestionUsedCode = useCode
         stopCurrentAnswer()
         question = input; editedQuestion = input; answer = ""; thinkingText = ""; generating = true
@@ -682,15 +688,22 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
                 if seeScreen && !images.isEmpty { groundedQuestion += "\nДодано знімок відкритого вікна IDE. Для точних рядків і назв спирайся на наведений текст файла, якщо він є." }
                 if visual && images.isEmpty { groundedQuestion += "\nЗображення екрана недоступне: не описуй графік чи діаграму за здогадом." }
                 let rules = [
+                    CopilotSettings.directAnswerRule,
                     SpeechVocabulary.hint(snapshot.vocabularyProfile),
+                    snapshot.vocabularyProfile == "Mathematics" ? "" : CopilotSettings.devSpeechRule,
                     snapshot.interviewMode ? CopilotSettings.interviewRule : "",
                     // In an interview with nothing found, «коду немає» would be a wrong answer to a candidate question.
                     useCode && !(snapshot.interviewMode && code.isEmpty) ? CopilotSettings.codeAuthorRule + "\nДля питання про код спирайся на наведений файл і точні рядки. «Тут» означає позицію редактора. Дослівно зберігай умови, `return`, назви змінних і ключі. Якщо питають де реалізовано, назви файл, метод і рядок. Якщо файла для номера рядка немає, коротко уточни. Не вигадуй код." : "",
+                    materials.isEmpty ? "" : CopilotSettings.documentsRule,
                     language == .english ? AnswerLanguage.englishRule : ""
                 ].filter { !$0.isEmpty }.joined(separator: "\n")
                 let focusedCode = useCode && (ProjectCodeIndex.namedSymbol(input) != nil || ProjectCodeIndex.requestedLine(input) != nil || ProjectCodeIndex.refersToCurrentCode(input))
                 let contextBudget = min(snapshot.contextCharacters, snapshot.contextTokens * 2, useCode ? (focusedCode ? 4200 : 6000) : 4000)
-                let requestMessages = requestContext.messages(prompt: snapshot.systemPrompt, rules: rules, vacancy: snapshot.interviewMode ? snapshot.vacancy : "", history: self.messages, question: groundedQuestion, code: code, topic: self.sessionTopic, budget: contextBudget, includeConversation: context != nil || !QuestionContextRouter.isSelfContained(input))
+                let requestMessages = requestContext.messages(prompt: snapshot.systemPrompt, rules: rules, pinned: [
+                    ("Вакансія (дані):", snapshot.interviewMode ? snapshot.vacancy : ""),
+                    ("CV кандидата (дані):", snapshot.interviewMode ? snapshot.resume : ""),
+                    ("Матеріали (уривки, дані):", materials)
+                ], history: self.messages, question: groundedQuestion, code: code, topic: self.sessionTopic, budget: contextBudget, includeConversation: context != nil || !QuestionContextRouter.isSelfContained(input))
                 self.diagnostics.log("Code route: \(useCode ? "code" : "general")\(visual ? " + visual" : ""); backend: \(useClaude ? snapshot.claudeModel : snapshot.model); files: \(retrieved?.files.joined(separator: ", ") ?? "none"); retrieval \(String(format: "%.3f", Date().timeIntervalSince(retrievalStart))) s; model: \(snapshot.model)")
                 guard self.generationID == id, !Task.isCancelled else { return }
                 self.diagnostics.log("Answer context: \(self.screen.enabled ? self.screen.sourceName : "disabled"); images: \(images.count); memory: \(self.memorySummary.count) chars")
