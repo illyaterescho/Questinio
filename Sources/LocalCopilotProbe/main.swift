@@ -33,7 +33,7 @@ import LocalCopilotCore
                 var files = Array(args[(index + 1)...].prefix(while: { !$0.hasPrefix("--") }))
                 if let also = args.firstIndex(of: "--also"), args.count > also + 1 { files.append(args[also+1]) }
                 for file in files {
-                    let result = try await speech.transcribeFile(path: file, language: args.firstIndex(of: "--language").flatMap { args.count > $0 + 1 ? args[$0+1] : nil } ?? settings.language, vocabulary: args.contains("--vocabulary") ? settings.speechVocabulary : "")
+                    let result = try await speech.transcribeFile(path: file, language: args.firstIndex(of: "--language").flatMap { args.count > $0 + 1 ? args[$0+1] : nil } ?? settings.language, vocabulary: args.firstIndex(of: "--profile").flatMap { args.count > $0 + 1 ? SpeechVocabulary.text(profile: args[$0+1], custom: "") : nil } ?? (args.contains("--vocabulary") ? settings.speechVocabulary : ""))
                     print("file=\(file)\ndecode_seconds=\(result.seconds)\ntranscript=\(result.text)")
                 }
             } else {

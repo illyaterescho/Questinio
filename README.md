@@ -35,6 +35,11 @@ stays on the Mac).
   numbers are sent with code questions ("what does line 129 do?", "where is X
   defined?", "what did you do in lab 6?"). Any JetBrains IDE: exact editor text via Accessibility and, for code
   questions, a screenshot of its window.
+- **Directions and interview practice**: a direction (all topics, frontend, backend, web, CRM, QA, DevOps,
+  mobile, data, or a language) tunes recognition terms and how the model reads ambiguous words. "Interview"
+  answers as the candidate would, in the first person, with `[your example]` instead of invented facts.
+- **Ukrainian + English**: recognition picks Ukrainian or English per utterance (English only when clear, so
+  "що робить useEffect" stays Ukrainian); English questions and "let's speak English" get English answers.
 - **Rendering**: Markdown, code and LaTeX via bundled marked + DOMPurify + KaTeX.
 - **History**: SQLite + JSONL session journal, export and restore.
 
@@ -102,6 +107,7 @@ swift run LocalCopilotProbe --download --variant openai_whisper-small
 swift run LocalCopilotProbe --transcribe sample.wav
 swift run LocalCopilotProbe --download-parakeet
 swift run LocalCopilotProbe --transcribe a.wav b.wav --engine parakeet --language uk
+swift run LocalCopilotProbe --transcribe q.wav --language uk+en --profile CRM
 ```
 
 ## License

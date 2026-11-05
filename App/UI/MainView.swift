@@ -338,6 +338,7 @@ struct ProjectPanel: View {
 struct FloatingView: View {
     @ObservedObject var model: ConversationManager
     @State private var showSource = false
+    private static let sourceHeight: CGFloat = 560
     private var latest: String {
         if let entry = model.questionInbox.entries.last { return entry.text }
         return model.running ? "Слухаю…" : "Увімкніть «Авто» або запис"
@@ -352,11 +353,14 @@ struct FloatingView: View {
                 QuestionInboxView(model: model, compact: true).fixedSize()
                 AutoListenToggle(model: model)
                 AccentButton(title: "Відповісти") { model.generateManual() }.help("Відповісти на останнє питання (⌃⌥⌘G)")
-                IconButton(symbol: "slider.horizontal.3", help: "Джерело звуку") { showSource.toggle() }
-                    .popover(isPresented: $showSource) { CaptureSourceView(model: model).frame(width: 420).padding(16) }
-                IconButton(symbol: model.settings.alwaysOnTop ? "pin.fill" : "pin", help: "Поверх інших вікон") { model.settings.alwaysOnTop.toggle() }
-                    .disabled(model.settings.panelOverlay)
+                IconButton(symbol: "slider.horizontal.3", help: "Звук, вікно й папка") { showSource.toggle(); model.resizePanel?(showSource ? Self.sourceHeight : -Self.sourceHeight) }
+                IconButton(symbol: model.settings.alwaysOnTop ? "pin.fill" : "pin", help: "Над усіма вікнами, зокрема повноекранними") { model.settings.alwaysOnTop.toggle() }
             }.padding(6).frame(height: UI.bar).glass(Capsule())
+            // In the panel, not a popover: a popover belongs to the inactive app, so its controls ignore clicks.
+            if showSource {
+                ScrollView { VStack(alignment: .leading, spacing: 14) { CodeSourceView(model: model); Divider(); CaptureSourceView(model: model) }.padding(14) }
+                    .frame(height: Self.sourceHeight - UI.inner).glass(RoundedRectangle(cornerRadius: UI.radius, style: .continuous))
+            }
             if !model.answer.isEmpty || model.generating || !model.question.isEmpty {
                 AnswerCard(model: model, compact: true).transition(.opacity.combined(with: .move(edge: .top)))
             }
@@ -368,6 +372,8 @@ struct FloatingView: View {
             Spacer(minLength: 0)
         }.padding(.horizontal, UI.inner).padding(.top, 28).padding(.bottom, UI.inner).frame(minWidth: 500, minHeight: 120)
         .animation(.snappy, value: model.answer.isEmpty && !model.generating)
+        // The frame is autosaved: shrink back before quitting so the next launch does not start oversized.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in if showSource { showSource = false; model.resizePanel?(-Self.sourceHeight) } }
         .ignoresSafeArea().appColorScheme(model.settings.appearance)
     }
 }
@@ -407,6 +413,30 @@ struct HistoryView: View {
     }
 }
 
+/// Which window and folder answers about code read: the same choices as «Контекст і код».
+struct CodeSourceView: View {
+    @ObservedObject var screen: ScreenContextService
+    @ObservedObject var project: ProjectContextService
+    init(model: ConversationManager) { screen = model.screen; project = model.project }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Звідки читати код").font(.headline)
+            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
+                GridRow { Text("Вікно").foregroundStyle(.secondary); CodeWindowPicker(screen: screen) }
+                GridRow {
+                    Text("Папка").foregroundStyle(.secondary)
+                    HStack {
+                        Text(project.rootPath.isEmpty ? "Не вибрано" : (project.rootPath as NSString).lastPathComponent).lineLimit(1).truncationMode(.middle).help(project.rootPath)
+                        Spacer()
+                        Button(project.rootPath.isEmpty ? "Вибрати…" : "Змінити…") { project.chooseFolder() }
+                    }
+                }
+            }
+            Text(screen.sourceName + " · " + screen.status).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+        }.task { if PermissionsManager.screenStatus == "Allowed" { await screen.refreshWindows() } }
+    }
+}
+
 struct CaptureSourceView: View {
     private var ghostTitle: String {
         guard model.settings.privateWindow else { return "Ghost OFF" }
@@ -421,6 +451,7 @@ struct CaptureSourceView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Джерело звуку").font(.headline)
+            if locked { Text("Зупиніть запис, щоб змінити джерело").font(.caption).foregroundStyle(.orange) }
             Picker("Сценарій", selection: Binding(get: { model.settings.listeningProfile }, set: { model.selectListeningProfile($0) })) { ForEach(ListeningProfile.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
                 .pickerStyle(.segmented).labelsHidden().disabled(locked)
             Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
@@ -452,10 +483,17 @@ struct CaptureSourceView: View {
                     }
                 }
                 GridRow {
-                    Text("Терміни").foregroundStyle(.secondary)
+                    Text("Напрям").foregroundStyle(.secondary)
                     Picker("", selection: $model.settings.vocabularyProfile) { ForEach(SpeechVocabulary.profiles, id: \.self) { Text(SpeechVocabulary.label($0)).tag($0) } }.labelsHidden()
                 }
             }.disabled(locked || model.diagnostics.testing)
+            Toggle("Співбесіда (тренування): відповідь кандидата від першої особи", isOn: $model.settings.interviewMode)
+            if model.settings.interviewMode {
+                HStack(alignment: .top) {
+                    TextField("Вакансія: вставте текст — кого шукають, стек, обов’язки, компанія", text: $model.settings.vacancy, axis: .vertical).lineLimit(3...8)
+                    if !model.settings.vacancy.isEmpty { Button { model.settings.vacancy = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.borderless).foregroundStyle(.secondary).help("Очистити вакансію") }
+                }
+            }
             Toggle("Записувати й мій мікрофон у режимі «Обидва»", isOn: $model.settings.captureMyVoice).disabled(locked)
             Toggle("Починати слухати при запуску застосунку", isOn: $model.settings.listenOnLaunch)
             Divider()

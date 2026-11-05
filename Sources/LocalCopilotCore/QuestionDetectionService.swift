@@ -12,7 +12,7 @@ public struct QuestionDetectionService: Sendable {
         if value.contains("?") { return true }
         if ProjectCodeIndex.requestedLine(value) != nil,
            ["що", "шо", "чому", "як", "де", "значить", "означає", "робить", "поясни", "поясніть", "скажи", "скажіть"].contains(where: value.contains) { return true }
-        let starts = ["what", "why", "how", "when", "where", "which", "who", "can you", "could you", "do you", "is there", "explain", "describe", "tell me", "write", "implement", "what about", "and if", "чим", "скільки", "навіщо", "у чому", "в чому", "для чого", "яким чином", "що", "шо", "чому", "чо", "як", "коли", "де", "якщо", "який", "яка", "які", "чи", "поясни", "поясніть", "розкажи", "розкажіть", "опиши", "напиши", "реалізуй", "покажи", "покажіть", "знайди", "скажи", "назви"]
+        let starts = ["what", "why", "how", "when", "where", "which", "who", "can you", "could you", "do you", "is there", "explain", "describe", "tell me", "walk me through", "give me", "what's", "have you", "did you", "would you", "are you", "write", "implement", "what about", "and if", "чим", "скільки", "навіщо", "у чому", "в чому", "для чого", "яким чином", "що", "шо", "чому", "чо", "як", "коли", "де", "якщо", "який", "яка", "які", "чи", "поясни", "поясніть", "наведи", "наведіть", "розкажи", "розкажіть", "опиши", "напиши", "реалізуй", "покажи", "покажіть", "знайди", "скажи", "назви"]
         let clauses = value.components(separatedBy: CharacterSet(charactersIn: ".!;\n"))
         for clause in clauses {
             var lead = clause.trimmingCharacters(in: .whitespacesAndNewlines)

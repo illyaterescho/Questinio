@@ -208,7 +208,8 @@ public struct QuestionInbox: Sendable {
         // Fillers and hanging words; an explicit question mark means the speaker finished.
         if s.hasSuffix("?") { return false }
         if last == "значить" { return !words.contains("що") }
-        return ["ну", "типу", "е", "ем", "по", "про", "з", "від", "до", "оці", "ці"].contains(last)
+        // English questions in an interview hang on the same kind of word: “Tell me about…”, “What is the…”.
+        return ["ну", "типу", "е", "ем", "по", "про", "з", "від", "до", "оці", "ці", "about", "the", "a", "an", "of", "and", "or", "your", "my", "um", "uh"].contains(last)
     }
     private static func replacementCue(_ text: String) -> (tail: String, signature: String, reformulation: Bool, head: String)? {
         let pattern = #"(?i)(?:\bстоп\b(?:[,!:\s.]+|$)|\b(?:ні|нет)[,\s]+(?:краще|точніше|давайте інше)[,\s:]*|\bпереформулюю\b[,\s:]*|\bінше питання\b[,\s:]*|\bкраще\s+(?:про\s+)?інше\b[,\s:]*|\bдавайте інше\b[,\s:]*|\bзабудьте попереднє\b[,\s:]*|\bне відповідайте\b[,\s:]*|\bточніше\b[,\s:]*)"#

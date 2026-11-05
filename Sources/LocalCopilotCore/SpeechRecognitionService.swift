@@ -56,6 +56,14 @@ public actor SpeechRecognitionService {
         busy = true; defer { busy = false }
         try Task.checkCancellation()
         let start = Date()
+        var language = language
+        if let preferred = BilingualSpeech.preferred(language) {
+            // An English-only model cannot detect: then the utterance is decoded in the preferred language.
+            if let detected = try? await whisper.detectLangauge(audioArray: samples) {
+                language = BilingualSpeech.choose(detected: detected.language, logProbability: detected.langProbs[detected.language] ?? -.infinity, preferred: preferred)
+            } else { language = preferred }
+            try Task.checkCancellation()
+        }
         var options = DecodingOptions(language: language == "auto" ? nil : language, temperatureFallbackCount: 1, detectLanguage: language == "auto", skipSpecialTokens: true, suppressBlank: true, concurrentWorkerCount: 1)
         if !vocabulary.isEmpty, let tokenizer = whisper.tokenizer {
             options.promptTokens = tokenizer.encode(text: " " + String(vocabulary.prefix(1500))).filter { $0 < tokenizer.specialTokens.specialTokenBegin }

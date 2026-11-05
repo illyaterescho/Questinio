@@ -54,6 +54,8 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
     @Published var answerTruncated = false
     @Published var generationSeconds: Double?
     @Published var sessionTopic = ""
+    /// Switched by “давай англійською” / “давай українською” in the conversation; a new session starts in Ukrainian.
+    @Published var answerLanguage = AnswerLanguage.ukrainian
     @Published var sessionTranscript = ""
     @Published var questionInbox = QuestionInbox()
     @Published var sessionSeconds: TimeInterval = 0
@@ -160,6 +162,7 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
     private var lastMeter = [AudioSource: Date]()
     var windowPreferencesChanged: (() -> Void)?
     var togglePanel: (() -> Void)?
+    var resizePanel: ((CGFloat) -> Void)?
     init(speech: SpeechRecognitionService = SpeechRecognitionService(), ollama: OllamaService = OllamaService(), settingsStore: SettingsManager = SettingsManager()) {
         self.speech = speech; self.ollama = ollama; self.settingsStore = settingsStore; let engine = SpeechEngineRouter(whisper: speech, parakeet: parakeet); self.engine = engine
         pipeline = SpeechPipeline(transcribe: { samples, language, vocabulary in try await engine.transcribe(samples, language: language, vocabulary: vocabulary) })
@@ -479,6 +482,7 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
             if let completed = update.completedUtterance, seenUtterances.insert(utterance).inserted {
                 diagnostics.log("Utterance finalized: \(event.source.rawValue); \(completed.split(whereSeparator: \.isWhitespace).count) words; audio \(String(format: "%.1f", event.finalAudioSeconds ?? 0)) s; whole-utterance decode \(event.wholeUtteranceDecode == true ? "yes" : "no"); auto question \(event.question == nil ? "no" : "yes")")
                 latestUtterance = completed
+                if let language = AnswerLanguage.switchRequest(completed) { switchLanguage(language) }
                 sessionContext.append(speaker: event.source == .system ? "Співрозмовник" : (captureSettings.listeningProfile == .classroom ? "Аудиторія / мікрофон" : "Мікрофон"), text: completed)
                 sessionTranscript = sessionContext.recent
                 record(DialogueRecord(id: utterance, date: captured, source: source, text: completed))
@@ -600,7 +604,9 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
     }
     func generate(_ input: String, context: SessionContext? = nil, before cutoff: Date = Date(), automatic: Bool = false) {
         guard !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { error = "Enter a question or capture a completed utterance first."; return }
-        let useCode = CodeQuestionRouter.needsCode(input, previousCodeQuestion: lastQuestionUsedCode)
+        let useCode = CodeQuestionRouter.needsCode(input, previousCodeQuestion: lastQuestionUsedCode, interview: settings.interviewMode)
+        if let language = AnswerLanguage.switchRequest(input) { switchLanguage(language) }
+        let language = AnswerLanguage.detect(input, current: answerLanguage)
         let responseContext = context ?? sessionContext
         let journalSession = session
         let continuingCodeQuestion = lastQuestionUsedCode && useCode && !QuestionContextRouter.isSelfContained(input)
@@ -675,12 +681,16 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
                 }
                 if seeScreen && !images.isEmpty { groundedQuestion += "\nДодано знімок відкритого вікна IDE. Для точних рядків і назв спирайся на наведений текст файла, якщо він є." }
                 if visual && images.isEmpty { groundedQuestion += "\nЗображення екрана недоступне: не описуй графік чи діаграму за здогадом." }
-                let prompt = snapshot.systemPrompt + (useCode
-                    ? "\n" + CopilotSettings.codeAuthorRule + "\nДля питання про код спирайся на наведений файл і точні рядки. «Тут» означає позицію редактора. Дослівно зберігай умови, `return`, назви змінних і ключі. Якщо питають де реалізовано, назви файл, метод і рядок. Якщо файла для номера рядка немає, коротко уточни. Не вигадуй код."
-                    : "")
+                let rules = [
+                    SpeechVocabulary.hint(snapshot.vocabularyProfile),
+                    snapshot.interviewMode ? CopilotSettings.interviewRule : "",
+                    // In an interview with nothing found, «коду немає» would be a wrong answer to a candidate question.
+                    useCode && !(snapshot.interviewMode && code.isEmpty) ? CopilotSettings.codeAuthorRule + "\nДля питання про код спирайся на наведений файл і точні рядки. «Тут» означає позицію редактора. Дослівно зберігай умови, `return`, назви змінних і ключі. Якщо питають де реалізовано, назви файл, метод і рядок. Якщо файла для номера рядка немає, коротко уточни. Не вигадуй код." : "",
+                    language == .english ? AnswerLanguage.englishRule : ""
+                ].filter { !$0.isEmpty }.joined(separator: "\n")
                 let focusedCode = useCode && (ProjectCodeIndex.namedSymbol(input) != nil || ProjectCodeIndex.requestedLine(input) != nil || ProjectCodeIndex.refersToCurrentCode(input))
                 let contextBudget = min(snapshot.contextCharacters, snapshot.contextTokens * 2, useCode ? (focusedCode ? 4200 : 6000) : 4000)
-                let requestMessages = requestContext.messages(prompt: prompt, history: self.messages, question: groundedQuestion, code: code, topic: self.sessionTopic, budget: contextBudget, includeConversation: context != nil || !QuestionContextRouter.isSelfContained(input))
+                let requestMessages = requestContext.messages(prompt: snapshot.systemPrompt, rules: rules, vacancy: snapshot.interviewMode ? snapshot.vacancy : "", history: self.messages, question: groundedQuestion, code: code, topic: self.sessionTopic, budget: contextBudget, includeConversation: context != nil || !QuestionContextRouter.isSelfContained(input))
                 self.diagnostics.log("Code route: \(useCode ? "code" : "general")\(visual ? " + visual" : ""); backend: \(useClaude ? snapshot.claudeModel : snapshot.model); files: \(retrieved?.files.joined(separator: ", ") ?? "none"); retrieval \(String(format: "%.3f", Date().timeIntervalSince(retrievalStart))) s; model: \(snapshot.model)")
                 guard self.generationID == id, !Task.isCancelled else { return }
                 self.diagnostics.log("Answer context: \(self.screen.enabled ? self.screen.sourceName : "disabled"); images: \(images.count); memory: \(self.memorySummary.count) chars")
@@ -771,8 +781,13 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
         if generating, !answer.isEmpty { answerLog.add(question: question, answer: answer, interrupted: true) }
         semanticTask?.cancel(); semanticToken = UUID(); generatedQuestion = nil; memoryTask?.cancel(); memoryTask = nil; generationID = UUID(); generationTask?.cancel(); generationTask = nil; generating = false
     }
+    func switchLanguage(_ language: AnswerLanguage) {
+        guard answerLanguage != language else { return }
+        answerLanguage = language; diagnostics.log("Answer language: \(language.rawValue)")
+        Task { await pipeline.setPrefersEnglish(language == .english) }
+    }
     func newConversation() async {
-        questionInbox = QuestionInbox()
+        questionInbox = QuestionInbox(); switchLanguage(.ukrainian)
         await stop(finalize: false); cancelGeneration(); answerLog = AnswerLog(); recognizedQuestionNote = ""; autoAnswerStatus = "Автовідповідь: очікування завершеного питання"; messages = []; sessionContext = SessionContext(); sessionTranscript = ""; memorySummary = ""; sessionTopic = ""; lastCodeContext = ""; lastProjectCode = ""; lastQuestionUsedCode = false; questionEditing = false; screen.clear(); session = UUID(); question = ""; answer = ""; thinkingText = ""; latestUtterance = ""
         systemTranscript = ""; microphoneTranscript = ""; systemInterim = ""; microphoneInterim = ""
         sessionRecords = []; transcriptCount = 0; activeSeconds = 0; sessionSeconds = 0; pendingAudioSeconds = 0; recognitionGaps = 0; droppedAudioFrames = 0; seenUtterances = []; captureTranscriptPrefix = [:]
@@ -790,7 +805,7 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
         do {
             guard let id = try await journal.latest() else { dialogueStatus = "Збереженого діалогу немає"; return }
             let records = try await journal.records(session: id)
-            cancelGeneration(); answerLog = AnswerLog(); questionInbox = QuestionInbox(); sessionContext = SessionContext()
+            cancelGeneration(); answerLog = AnswerLog(); questionInbox = QuestionInbox(); sessionContext = SessionContext(); switchLanguage(.ukrainian)
             messages = []; question = ""; answer = ""; thinkingText = ""; systemInterim = ""; microphoneInterim = ""
             recognitionGaps = 0; pendingAudioSeconds = 0; sessionTopic = ""; lastCodeContext = ""; lastProjectCode = ""; lastQuestionUsedCode = false
             systemTranscript = ""; microphoneTranscript = ""; sessionRecords = records; transcriptCount = records.count

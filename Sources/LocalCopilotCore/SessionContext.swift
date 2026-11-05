@@ -1,9 +1,18 @@
 import Foundation
 
 public enum SpeechVocabulary {
-    public static let profiles = ["General", "Mathematics", "JavaScript", "Python", "SQL"]
+    public static let profiles = ["General", "Frontend", "Backend", "Web", "CRM", "QA", "DevOps", "Mobile", "Data", "JavaScript", "Python", "Java", "CSharp", "PHP", "Go", "Cpp", "SQL", "Mathematics"]
     public static func label(_ profile: String) -> String {
-        switch profile { case "General": "Програмування"; case "Mathematics": "Математика"; default: profile }
+        switch profile {
+        case "General": "Усі теми"; case "Frontend": "Фронтенд"; case "Backend": "Бекенд"; case "Web": "Веб / фулстек"
+        case "QA": "QA / тестування"; case "Mobile": "Мобільна розробка"; case "Data": "Data / ML"; case "JavaScript": "JavaScript / TypeScript"
+        case "CSharp": "C# / .NET"; case "Cpp": "C++"; case "SQL": "SQL / бази даних"; case "Mathematics": "Математика"
+        default: profile
+        }
+    }
+    /// Tells the model which field ambiguous words belong to: «лід» in CRM is a lead.
+    public static func hint(_ profile: String) -> String {
+        profile == "General" || !profiles.contains(profile) ? "" : "Напрям розмови: \(label(profile)). Неоднозначні терміни тлумач у цьому напрямі."
     }
     public static func text(profile: String, custom: String) -> String {
         let terms: String
@@ -11,6 +20,19 @@ public enum SpeechVocabulary {
         case "Mathematics": terms = "математична статистика, дисперсія, середнє, медіана, асиметрія, ексцес, довірчий інтервал, нульова гіпотеза, p-value, нормальний розподіл, рівномірний розподіл, експоненціальний розподіл, метод моментів, кореляція, регресія."
         case "JavaScript": terms = "JavaScript, TypeScript, Promise, async/await, callback, closure, event loop, React, Node.js, null, undefined, NaN, race condition, рейс кондишн, уникати, статична типізація, динамічна типізація."
         case "Python": terms = "Python, asyncio, coroutine, generator, decorator, GIL, list, tuple, dictionary, type hints, статична типізація, динамічна типізація."
+        case "Frontend": terms = "фронтенд, HTML, CSS, JavaScript, TypeScript, DOM, React, Angular, Vue, Next.js, хук, useEffect, useState, стан, пропси, компонент, рендеринг, virtual DOM, SPA, SSR, Flexbox, Grid, адаптивна верстка, accessibility, Vite, webpack, CORS, localStorage, event loop, Promise."
+        case "Backend": terms = "бекенд, API, REST, GraphQL, HTTP, статус-код, ендпоінт, мікросервіси, моноліт, Node.js, Express, NestJS, Spring, Django, ORM, індекс, транзакція, кешування, Redis, черга, Kafka, RabbitMQ, JWT, OAuth, автентифікація, авторизація, масштабування, ідемпотентність."
+        case "Web": terms = "веб, фулстек, клієнт, сервер, HTTP, HTTPS, REST, API, cookie, сесія, JWT, CORS, DNS, CDN, кешування, React, Node.js, SQL, деплой, Docker, SPA, SSR, SEO, WebSocket, XSS, CSRF, SQL injection."
+        case "CRM": terms = "CRM, Salesforce, HubSpot, Bitrix24, Zoho, Pipedrive, Dynamics 365, лід, угода, воронка продажів, pipeline, контакт, кастомні поля, сегментація, автоматизація, workflow, вебхук, інтеграція, API, імпорт, дедуплікація, конверсія, SLA, тікет, churn, Apex."
+        case "QA": terms = "тестування, QA, тест-кейс, чек-лист, баг-репорт, severity, priority, регресія, smoke, юніт-тести, інтеграційні тести, e2e, Selenium, Playwright, Cypress, Postman, автоматизація, тест-план, Jira, мок, покриття, граничні значення, класи еквівалентності."
+        case "DevOps": terms = "DevOps, CI/CD, Git, Docker, контейнер, образ, Kubernetes, под, деплой, GitHub Actions, Jenkins, Terraform, Ansible, AWS, Azure, GCP, Linux, Nginx, моніторинг, Prometheus, Grafana, логи, load balancer, secrets."
+        case "Mobile": terms = "мобільна розробка, iOS, Android, Swift, SwiftUI, UIKit, Kotlin, Jetpack Compose, Flutter, Dart, React Native, життєвий цикл, ViewModel, MVVM, корутини, Combine, push-сповіщення, App Store, Google Play, Core Data, Room."
+        case "Data": terms = "Data Science, машинне навчання, Python, pandas, NumPy, SQL, ETL, датасет, ознаки, модель, перенавчання, overfitting, регресія, класифікація, кластеризація, нейромережа, PyTorch, TensorFlow, accuracy, precision, recall, Spark."
+        case "Java": terms = "Java, JVM, Spring Boot, Hibernate, JPA, Maven, Gradle, ООП, інтерфейс, абстрактний клас, колекції, HashMap, ArrayList, Stream API, лямбда, багатопоточність, synchronized, garbage collector, exception."
+        case "CSharp": terms = "C#, .NET, ASP.NET Core, Entity Framework, LINQ, async/await, Task, делегат, подія, інтерфейс, generics, dependency injection, NuGet, garbage collector, value type, reference type, record."
+        case "PHP": terms = "PHP, Laravel, Symfony, Composer, Eloquent, міграції, middleware, контролер, PDO, сесії, MySQL, namespace, trait, інтерфейс, PSR."
+        case "Go": terms = "Go, Golang, горутина, канал, select, mutex, WaitGroup, context, інтерфейс, структура, slice, map, defer, panic, error, модулі, Gin."
+        case "Cpp": terms = "C++, вказівник, посилання, пам'ять, new, delete, RAII, smart pointer, unique_ptr, shared_ptr, STL, vector, шаблони, віртуальні функції, конструктор, деструктор, move semantics, undefined behavior."
         case "SQL": terms = "SQL, PostgreSQL, MySQL, SELECT, JOIN, GROUP BY, HAVING, index, transaction, ACID, isolation, deadlock, індекс, транзакція."
         default: terms = "програмування, алгоритм, структура даних, масив, список, словник, хеш-таблиця, стек, черга, рекурсія, цикл, функція, метод, клас, об’єкт, інтерфейс, наслідування, поліморфізм, інкапсуляція, абстракція, ООП, патерн, компілятор, потік, асинхронність, race condition, рейс кондишн, API, REST, HTTP, JSON, база даних, SQL, транзакція, індекс, Git, Docker, Python, JavaScript, TypeScript, Java, C#, C++, Swift, Kotlin, Go, React, Angular, Node.js, Django, pandas, NumPy, null, exception, debug, статична типізація, динамічна типізація."
         }
@@ -63,11 +85,15 @@ public struct SessionContext: Sendable {
         self.summary = String(summary.prefix(5000))
         archived.removeFirst(snapshot.count)
     }
-    public func messages(prompt: String, history: [ChatMessage], question: String, code: String, topic: String, budget: Int, includeConversation: Bool = true) -> [ChatMessage] {
+    /// `rules` are the app's own per-question instructions: they are never cut, unlike the user-editable `prompt`.
+    public func messages(prompt: String, rules: String = "", vacancy: String = "", history: [ChatMessage], question: String, code: String, topic: String, budget: Int, includeConversation: Bool = true) -> [ChatMessage] {
         let budget = max(1024, budget)
-        let system = String(prompt.prefix(min(1400, budget / 2)))
+        let prompt = String(prompt.prefix(min(1400, budget / 2)))
+        let system = prompt + (rules.isEmpty ? "" : "\n" + rules)
         let question = String(question.suffix(min(8000, budget / 4)))
-        var left = budget - system.count - question.count - 100
+        // Rules and the job posting come on top of the budget, so they never squeeze out the conversation.
+        let vacancy = String(vacancy.prefix(2500))
+        var left = budget + vacancy.count + (vacancy.isEmpty ? 0 : 20) - prompt.count - question.count - 100
         var blocks: [String] = []
         func add(_ label: String, _ text: String, maximum: Int, tail: Bool = false) {
             guard !text.isEmpty, left > label.count + 4 else { return }
@@ -75,6 +101,8 @@ public struct SessionContext: Sendable {
             let value = tail ? String(text.suffix(count)) : String(text.prefix(count))
             blocks.append(label + "\n" + value); left -= label.count + value.count + 2
         }
+        // Even “що таке X?” in an interview is answered for this job, so the posting is not tied to the conversation.
+        add("Вакансія (дані):", vacancy, maximum: 2500)
         if includeConversation { add("Тема / умови розмови (дані):", topic, maximum: 1200) }
         add("Показаний код / OCR екрана (дані):", code, maximum: max(0, left * 70 / 100))
         if includeConversation {

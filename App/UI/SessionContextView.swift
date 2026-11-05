@@ -9,7 +9,7 @@ struct SessionContextView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: UI.gap) {
             Text("Контекст і код").font(.largeTitle.weight(.semibold))
-            HStack { Image(systemName: "tag").foregroundStyle(.secondary); TextField("Тема, мова, умови задачі — наприклад React, співбесіда, нарада…", text: $model.sessionTopic).textFieldStyle(.plain) }.padding(.horizontal, 16).frame(height: UI.control + 6).glass(Capsule(), interactive: true)
+            HStack { Image(systemName: "tag").foregroundStyle(.secondary); TextField("Тема, умови задачі, для співбесіди — вакансія й коротко про ваш досвід…", text: $model.sessionTopic).textFieldStyle(.plain) }.padding(.horizontal, 16).frame(height: UI.control + 6).glass(Capsule(), interactive: true)
             VStack(alignment: .leading, spacing: 10) {
                 CardHeader("Папка проєкту", symbol: "folder") { IDEContextView(editor: model.editor) }
                 ProjectContextView(project: model.project)
@@ -17,14 +17,7 @@ struct SessionContextView: View {
             HStack(alignment: .top, spacing: 16) {
                 VStack(alignment: .leading, spacing: 10) {
                     CardHeader("Показаний код", symbol: "text.viewfinder") { Toggle("Знімок / OCR", isOn: $screen.enabled).toggleStyle(.switch).controlSize(.mini); Button("Очистити") { screen.clear() }.controlSize(.small) }
-                    HStack {
-                        Picker("Вікно", selection: $screen.selectedWindow) {
-                            Text("Виберіть вікно з кодом…").tag(UInt32(0))
-                            ForEach(screen.windows) { Text($0.title).tag($0.id) }
-                            if screen.selectedWindow != 0 && !screen.windows.contains(where: { $0.id == screen.selectedWindow }) { Text("Вікно \(screen.selectedWindow) · оновіть список").tag(screen.selectedWindow) }
-                        }
-                        Button { Task { await screen.refreshWindows() } } label: { Image(systemName: "arrow.clockwise") }.help("Оновити вікна")
-                    }
+                    CodeWindowPicker(screen: screen)
                     HStack {
                         Button("Зняти знімок") { Task { await screen.capture() } }
                         Button("Виділити область") { screen.selectRegion() }
@@ -61,6 +54,20 @@ struct CompactCodeContext: View {
             Button { Task { await screen.capture() } } label: { Image(systemName: "arrow.clockwise") }.disabled(screen.busy).help("Оновити показаний код")
             Toggle("Код", isOn: $screen.enabled).toggleStyle(.checkbox)
         }.font(.caption)
+    }
+}
+
+struct CodeWindowPicker: View {
+    @ObservedObject var screen: ScreenContextService
+    var body: some View {
+        HStack {
+            Picker("Вікно", selection: $screen.selectedWindow) {
+                Text("Виберіть вікно з кодом…").tag(UInt32(0))
+                ForEach(screen.windows) { Text($0.title).tag($0.id) }
+                if screen.selectedWindow != 0 && !screen.windows.contains(where: { $0.id == screen.selectedWindow }) { Text("Вікно \(screen.selectedWindow) · оновіть список").tag(screen.selectedWindow) }
+            }.labelsHidden()
+            Button { Task { await screen.refreshWindows() } } label: { Image(systemName: "arrow.clockwise") }.buttonStyle(.borderless).help("Оновити вікна")
+        }
     }
 }
 

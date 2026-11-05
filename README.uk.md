@@ -33,6 +33,11 @@ macOS 14+). Розшифровує дзвінок або мікрофон пря
   релевантні фрагменти з точними номерами рядків («що робить рядок 129?»,
   «де визначено X?»). Будь-яка JetBrains IDE: точний текст редактора через Accessibility
   і, для питань про код, знімок її вікна.
+- **Напрями й тренування співбесіди**: напрям (усі теми, фронтенд, бекенд, веб, CRM, QA, DevOps, мобільна,
+  data чи мова програмування) підказує терміни розпізнаванню й моделі. «Співбесіда» дає відповідь кандидата
+  від першої особи, з `[ваш приклад]` замість вигаданих фактів.
+- **Українська + English**: розпізнавання вибирає мову для кожної репліки (англійську лише коли вона очевидна,
+  тож «що робить useEffect» лишається українським); на англійські питання й «давай англійською» — відповідь англійською.
 - **Відображення**: Markdown, код і LaTeX через вбудовані marked + DOMPurify + KaTeX.
 - **Історія**: SQLite + JSONL-журнал сесії, експорт і відновлення.
 
@@ -100,6 +105,7 @@ swift run LocalCopilotProbe --download --variant openai_whisper-small
 swift run LocalCopilotProbe --transcribe sample.wav
 swift run LocalCopilotProbe --download-parakeet
 swift run LocalCopilotProbe --transcribe a.wav b.wav --engine parakeet --language uk
+swift run LocalCopilotProbe --transcribe q.wav --language uk+en --profile CRM
 ```
 
 ## Ліцензія

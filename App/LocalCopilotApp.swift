@@ -41,6 +41,7 @@ final class CopilotPanel: NSPanel {
         guard self.model == nil else { applyPreferences(); return }; self.model = model
         model.togglePanel = { [weak self] in self?.togglePanel() }
         model.windowPreferencesChanged = { [weak self] in self?.applyPreferences() }
+        model.resizePanel = { [weak self] extra in self?.resizePanel(by: extra) }
         let hotkeys = HotkeyManager(); self.hotkeys = hotkeys
         hotkeys.action = { [weak model] key in
             guard let model else { return }
@@ -62,17 +63,26 @@ final class CopilotPanel: NSPanel {
     func applyPreferences() {
         guard let model else { return }
         if let panel {
-            if model.settings.panelOverlay {
+            if model.settings.alwaysOnTop {
                 panel.level = .floating
                 panel.collectionBehavior = [.canJoinAllSpaces, .canJoinAllApplications, .fullScreenAuxiliary, .fullScreenDisallowsTiling]
             } else {
-                panel.level = model.settings.alwaysOnTop ? .floating : .normal
+                panel.level = .normal
                 panel.collectionBehavior = [.auxiliary, .fullScreenNone, .fullScreenDisallowsTiling]
             }
         }
         let sharing: NSWindow.SharingType = model.settings.privateWindow ? .none : .readOnly
         for window in NSApp.windows where window.sharingType != sharing { window.sharingType = sharing }
         if lastHotkeyEnabled != model.settings.hotkeysEnabled { lastHotkeyEnabled = model.settings.hotkeysEnabled; hotkeys?.setEnabled(model.settings.hotkeysEnabled) }
+    }
+    /// Grows downwards so the bar stays where the user put it, but not past the bottom of the screen.
+    private func resizePanel(by extra: CGFloat) {
+        guard let panel else { return }
+        var frame = panel.frame
+        let height = max(panel.minSize.height, frame.height + extra)
+        frame.origin.y -= height - frame.height; frame.size.height = height
+        if let bottom = panel.screen?.visibleFrame.minY, frame.minY < bottom { frame.origin.y = bottom }
+        panel.setFrame(frame, display: true)
     }
     func togglePanel() {
         guard let model else { return }
@@ -87,6 +97,7 @@ final class CopilotPanel: NSPanel {
             self.panel = panel
         }
         applyPreferences(); panel?.makeKeyAndOrderFront(nil)
-        if !model.settings.panelOverlay { NSApp.activate(ignoringOtherApps: true) }
+        // Activating would pull the user out of a full-screen app's Space.
+        if !model.settings.alwaysOnTop { NSApp.activate(ignoringOtherApps: true) }
     }
 }

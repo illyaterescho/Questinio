@@ -41,8 +41,12 @@ import LocalCopilotCore
     func chooseFolder() {
         let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true; panel.canCreateDirectories = false
         panel.message = "Виберіть папку проєкту або лабораторної. Questionio читатиме код із цієї папки локально."
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        connect(url.path)
+        let choose = { [weak self] (response: NSApplication.ModalResponse) in
+            if response == .OK, let url = panel.url { self?.connect(url.path) }
+        }
+        // Over a full-screen app a separate dialog opens out of sight on another Space; a sheet stays with the panel.
+        if let window = NSApp.keyWindow as? CopilotPanel { panel.beginSheetModal(for: window, completionHandler: choose) }
+        else { choose(panel.runModal()) }
     }
     func connect(_ path: String) {
         epoch = UUID(); rootPath = path; selectedFile = ""; files = []; index = ProjectCodeIndex(files: []); matches = []

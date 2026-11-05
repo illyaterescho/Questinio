@@ -56,6 +56,9 @@ public actor SpeechPipeline {
     private var settings = CopilotSettings()
     private var contextVocabulary = ""
     public func setContextVocabulary(_ terms: String) { contextVocabulary = String(terms.prefix(900)) }
+    private var prefersEnglish = false
+    /// After “давай англійською” bilingual recognition leans to English until switched back.
+    public func setPrefersEnglish(_ value: Bool) { prefersEnglish = value }
     private var handler: (@Sendable (PipelineEvent) async -> Void)?
     public init(speech: SpeechRecognitionService) {
         QueuedAudioChunk.cleanupStaleDirectories()
@@ -195,7 +198,8 @@ public actor SpeechPipeline {
             let item = pending.removeFirst(); let chunk = item.metadata; let currentEpoch = epoch; let micEpoch = microphoneEpoch
             do {
                 let chunk = try item.load()
-                let result = try await transcribe(chunk.samples, settings.language, settings.speechVocabulary + " " + contextVocabulary)
+                let language = settings.language == "uk+en" && prefersEnglish ? "en+uk" : settings.language
+                let result = try await transcribe(chunk.samples, language, settings.speechVocabulary + " " + contextVocabulary)
                 guard running, currentEpoch == epoch, chunk.source != .microphone || (!microphoneMuted && micEpoch == microphoneEpoch) else { continue }
                 if chunk.replacesUtterance {
                     let fallback = fullDecodeFallback.removeValue(forKey: chunk.utterance) ?? []

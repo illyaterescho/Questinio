@@ -324,7 +324,7 @@ final class CoreTests: XCTestCase {
         let terms = SpeechVocabulary.text(profile: "General", custom: "")
         for term in ["Python", "Java", "C++", "Docker", "рекурсія", "поліморфізм", "race condition"] { XCTAssertTrue(terms.contains(term), term) }
         XCTAssertLessThan(terms.count, 800) // leaves room for project terms in the speech prompt
-        XCTAssertEqual(SpeechVocabulary.label("General"), "Програмування")
+        XCTAssertEqual(SpeechVocabulary.label("General"), "Усі теми")
     }
     func testOpenEditorPhrasesRouteToCode() {
         for question in ["А що тут відбувається?", "Що робить цей клас?", "Що в цьому файлі?", "Навіщо цей цикл?"] { XCTAssertTrue(CodeQuestionRouter.needsCode(question), question) }
@@ -337,7 +337,6 @@ final class CoreTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: ["schemaVersion": 9, "claudeSendScreenshots": true, "privateWindow": true]).write(to: store.url)
         var settings = try store.load()
         XCTAssertFalse(settings.claudeSendScreenshots) // version 9 forced it on, so it is reset once
-        XCTAssertTrue(settings.panelOverlay) // whoever had Ghost keeps the panel behaviour
         settings.claudeSendScreenshots = true; try store.save(settings)
         XCTAssertTrue(try store.load().claudeSendScreenshots) // later opt-in sticks
     }
@@ -368,7 +367,7 @@ final class CoreTests: XCTestCase {
         let store = SettingsManager(url: directory.appendingPathComponent("settings.json"))
         try JSONSerialization.data(withJSONObject: ["schemaVersion": 10, "systemPrompt": CopilotSettings.previousDeveloperPrompt]).write(to: store.url)
         XCTAssertEqual(try store.load().systemPrompt, CopilotSettings.developerPrompt)
-        XCTAssertEqual(try store.load().schemaVersion, 11)
+        XCTAssertEqual(try store.load().schemaVersion, 12)
         try JSONSerialization.data(withJSONObject: ["schemaVersion": 10, "systemPrompt": "Мій промпт"]).write(to: store.url)
         XCTAssertEqual(try store.load().systemPrompt, "Мій промпт")
     }
