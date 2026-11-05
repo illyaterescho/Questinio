@@ -50,6 +50,8 @@ final class CopilotPanel: NSPanel {
         model.resizePanel = { [weak self] extra in self?.resizePanel(by: extra) }
         model.panelMinimumHeight = { [weak self] height in
             guard let panel = self?.panel else { return }
+            // Never taller than the screen: a longer answer scrolls inside the panel, from its start.
+            let height = min(height, (panel.screen?.visibleFrame.height ?? height) - 20)
             panel.minSize.height = height
             if panel.frame.height < height { self?.resizePanel(by: height - panel.frame.height) }
         }

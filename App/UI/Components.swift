@@ -183,6 +183,7 @@ struct TranscriptCard: View {
 struct AnswerCard: View {
     @ObservedObject var model: ConversationManager
     var compact = false
+    var onAnswerHeight: ((CGFloat) -> Void)? = nil
     var body: some View {
         VStack(alignment: .leading, spacing: UI.inner) {
             CardHeader("Відповідь", symbol: "sparkles") {
@@ -225,7 +226,7 @@ struct AnswerCard: View {
             if model.displayedAnswer.isEmpty && !model.generating {
                 EmptyState(symbol: "sparkles", title: "Відповідь з’явиться тут", hint: "Поставте питання внизу або натисніть на питання зі списку.")
             } else {
-                AnswerWebView(text: model.displayedAnswer.isEmpty ? (model.answersUseClaude ? "Генерую через Haiku 5.5…" : "Генерую локально…") : model.displayedAnswer, streaming: model.generating && model.answerLog.shown == nil).frame(minHeight: 90)
+                AnswerWebView(text: model.displayedAnswer.isEmpty ? (model.answersUseClaude ? "Генерую через Haiku 5.5…" : "Генерую локально…") : model.displayedAnswer, streaming: model.generating && model.answerLog.shown == nil, onHeight: onAnswerHeight).frame(minHeight: 90)
             }
             if !model.thinkingText.isEmpty { DisclosureGroup("Міркування моделі") { ScrollView { Text(model.thinkingText).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }.frame(maxHeight: 120) } }
             if model.answerTruncated { Label("Модель зупинилася на ліміті довжини · збільште контекст", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange) }

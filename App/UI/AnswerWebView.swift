@@ -6,6 +6,8 @@ import AppKit
 struct AnswerWebView: NSViewRepresentable {
     let text: String
     let streaming: Bool
+    /// Height the rendered answer needs, so the floating panel can grow to show it whole.
+    var onHeight: ((CGFloat) -> Void)? = nil
     @Environment(\.colorScheme) private var colorScheme
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeNSView(context: Context) -> WKWebView {
@@ -19,11 +21,13 @@ struct AnswerWebView: NSViewRepresentable {
         return view
     }
     func updateNSView(_ view: WKWebView, context: Context) {
+        context.coordinator.onHeight = onHeight
         context.coordinator.update(text: text, dark: colorScheme == .dark, streaming: streaming)
     }
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) { coordinator.pending?.cancel(); view.navigationDelegate = nil }
     @MainActor final class Coordinator: NSObject, WKNavigationDelegate {
         weak var view: WKWebView?
+        var onHeight: ((CGFloat) -> Void)?
         var ready = false
         var text = ""; var dark = false; var streaming = false
         var pending: Task<Void, Never>?
@@ -40,7 +44,9 @@ struct AnswerWebView: NSViewRepresentable {
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { ready = true; render() }
         private func render() {
             guard let data = try? JSONSerialization.data(withJSONObject: [text]), let json = String(data: data, encoding: .utf8) else { return }
-            view?.evaluateJavaScript("window.renderAnswer(\(json)[0],\(dark),\(streaming))")
+            view?.evaluateJavaScript("window.renderAnswer(\(json)[0],\(dark),\(streaming))") { [weak self] result, _ in
+                if let height = (result as? [String: Any])?["height"] as? Double, height > 0 { self?.onHeight?(CGFloat(height)) }
+            }
         }
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             if action.navigationType == .linkActivated {

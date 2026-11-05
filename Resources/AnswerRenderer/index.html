@@ -21,10 +21,11 @@ marked.use({extensions:[
 {name:'mathInline',level:'inline',start:s=>s.search(/\$|\\\(/),tokenizer(s){const m=/^(\\\([\s\S]*?\\\)|\$\$[\s\S]*?\$\$|\$(?!\$)[^\n$]+?\$)/.exec(s);if(m)return{type:'mathInline',raw:m[0],text:m[0]}},renderer:t=>escapeHTML(t.text)}]});
 window.renderAnswer=(text,dark,streaming)=>{
  document.body.classList.toggle('dark',dark);const root=document.getElementById('answer');
- const atBottom=window.scrollY+innerHeight>=document.documentElement.scrollHeight-60;
+ // A new answer starts at the top; a streaming one is never dragged down to its end.
+ const fresh=!text.startsWith(window.lastAnswer||'\u0000');window.lastAnswer=text;
  root.innerHTML=DOMPurify.sanitize(marked.parse(text),{FORBID_TAGS:['img','iframe','style','script','input','form'],FORBID_ATTR:['style']});
  renderMathInElement(root,{delimiters:[{left:'$$',right:'$$',display:true},{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false},{left:'$',right:'$',display:false}],throwOnError:false,trust:false,strict:'ignore'});
- if(streaming&&atBottom)window.scrollTo(0,document.documentElement.scrollHeight);
- return {math:root.querySelectorAll('.katex').length,code:root.querySelectorAll('pre code').length,text:root.textContent};
+ if(fresh)window.scrollTo(0,0);
+ return {math:root.querySelectorAll('.katex').length,code:root.querySelectorAll('pre code').length,text:root.textContent,height:Math.ceil(root.getBoundingClientRect().height)+24};
 };
 </script></body></html>

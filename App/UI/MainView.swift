@@ -342,7 +342,10 @@ struct FloatingView: View {
     private var showsAnswer: Bool { !model.answer.isEmpty || model.generating || !model.question.isEmpty }
     /// Bar, answer card with its question and a few lines of answer, and the ask field all fit; less than this
     /// and SwiftUI cut the bar and the ask field off a 140-pt panel.
-    private var minimumHeight: CGFloat { (showsAnswer ? 400 : 140) + (showSource ? Self.sourceHeight : 0) }
+    @State private var answerHeight: CGFloat = 0
+    /// With an answer: bar, question, header and ask field (~330 pt) plus the whole rendered answer,
+    /// so it reads without scrolling; the panel caps this at the screen height.
+    private var minimumHeight: CGFloat { (showsAnswer ? max(400, 330 + answerHeight) : 140) + (showSource ? Self.sourceHeight : 0) }
     private var latest: String {
         if let entry = model.questionInbox.entries.last { return entry.text }
         return model.running ? "Слухаю…" : "Увімкніть «Авто» або запис"
@@ -370,7 +373,7 @@ struct FloatingView: View {
                     .frame(height: Self.sourceHeight - UI.inner).glass(RoundedRectangle(cornerRadius: UI.radius, style: .continuous))
             }
             if showsAnswer {
-                AnswerCard(model: model, compact: true).transition(.opacity.combined(with: .move(edge: .top)))
+                AnswerCard(model: model, compact: true, onAnswerHeight: { height in if abs(height - answerHeight) > 8 { answerHeight = height } }).transition(.opacity.combined(with: .move(edge: .top)))
             }
             HStack(spacing: 8) {
                 TextField("Запитати…", text: $model.manualQuestion).textFieldStyle(.plain).font(.system(size: 13)).onSubmit { model.generateManual() }
