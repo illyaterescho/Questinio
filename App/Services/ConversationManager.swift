@@ -654,7 +654,12 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
                 let asksVisual = VisualQuestionRouter.isVisual(input)
                 let visual = ScreenshotPolicy.capturesForVisualQuestion(visual: asksVisual, allowed: snapshot.claudeSendScreenshots, cloud: useClaude, automatic: automatic)
                 let seeScreen = ScreenshotPolicy.capturesForCodeQuestion(codeQuestion: useCode, allowed: snapshot.claudeSendScreenshots, cloud: useClaude, automatic: automatic)
-                if (visual || seeScreen) && self.screen.enabled {
+                // «What is on the screen» means the window in front of the user; code questions mean the IDE.
+                let frontWindow = visual ? ScreenContextService.frontWindow() : nil
+                if let frontWindow, self.screen.enabled {
+                    await self.screen.refreshForAnswer(window: frontWindow)
+                    guard self.generationID == id, !Task.isCancelled else { return }
+                } else if (visual || seeScreen) && self.screen.enabled {
                     await self.screen.ensureIDEWindow()
                     if self.screen.hasSource { await self.screen.refreshForAnswer() }
                     guard self.generationID == id, !Task.isCancelled else { return }
@@ -696,7 +701,8 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
                     } else if try await ollama.supportsVision(model: snapshot.model) { images = [data.base64EncodedString()] }
                     else { self.diagnostics.log("Selected model has no Vision; using OCR text only") }
                 }
-                if seeScreen && !images.isEmpty { groundedQuestion += "\nДодано знімок відкритого вікна IDE. Для точних рядків і назв спирайся на наведений текст файла, якщо він є." }
+                if frontWindow != nil && !images.isEmpty { groundedQuestion += "\nДодано знімок вікна, яке зараз перед користувачем (\(self.screen.sourceName)). Питання про те, що на ньому: відповідай насамперед за знімком — що зображено, що означають осі, кольори й розмір точок; матеріали лише доповнюють." }
+                else if seeScreen && !images.isEmpty { groundedQuestion += "\nДодано знімок відкритого вікна IDE. Для точних рядків і назв спирайся на наведений текст файла, якщо він є." }
                 if asksVisual && images.isEmpty { groundedQuestion += "\nЗображення екрана недоступне: не описуй графік чи діаграму за здогадом; скажи, що про нього написано в матеріалах, якщо там є." }
                 let rules = [
                     CopilotSettings.directAnswerRule,

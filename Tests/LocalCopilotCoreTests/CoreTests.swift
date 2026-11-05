@@ -515,6 +515,11 @@ final class CoreTests: XCTestCase {
             XCTAssertFalse(VisualQuestionRouter.isVisual(question), question)
         }
     }
+    func testQuestionsAboutWhatIsOnScreenAreVisual() {
+        for question in ["шо це за сині точки в тебе на екрані", "що ми бачимо на цій діаграмі, чому ці кульки різнокольорові", "Що ти бачиш?", "Що зображено на рисунку 7?", "Чому бульбашки різного розміру?"] {
+            XCTAssertTrue(VisualQuestionRouter.isVisual(question), question)
+        }
+    }
     func testFullPromptSurvivesSmallBudget() {
         XCTAssertLessThanOrEqual(CopilotSettings.developerPrompt.count, 1400)
         let messages = SessionContext().messages(prompt: CopilotSettings.developerPrompt, history: [], question: "Що таке кеш?", code: "", topic: "", budget: 3200)

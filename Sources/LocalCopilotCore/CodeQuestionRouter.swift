@@ -30,7 +30,8 @@ public enum CodeQuestionRouter {
 /// Questions about something drawn on screen: exact source text cannot answer them, only a screenshot can.
 public enum VisualQuestionRouter {
     public static func isVisual(_ question: String) -> Bool {
-        let pattern = #"(?:^|[^\p{L}])(?:графік|діаграм|гістограм|крив(?:а|у|ої|ій|ою|і|их)(?:[^\p{L}]|$)|ліні(?:я|ї|ю|єю|й)(?:[^\p{L}]|$)|колір|кольор|вісь(?:[^\p{L}]|$)|ос(?:і|ях)(?:[^\p{L}]|$)|легенд)"#
+        // Also «що на екрані», «що ти бачиш», «ці точки / кульки / бульбашки», «на рисунку»: the user means what they see.
+        let pattern = #"(?:^|[^\p{L}])(?:на\s+екрані|бачиш|видно|зображен|точк|кульк|бульбаш|рисун|малюн|скрін|графік|діаграм|гістограм|крив(?:а|у|ої|ій|ою|і|их)(?:[^\p{L}]|$)|ліні(?:я|ї|ю|єю|й)(?:[^\p{L}]|$)|колір|кольор|вісь(?:[^\p{L}]|$)|ос(?:і|ях)(?:[^\p{L}]|$)|легенд)"#
         return question.lowercased().range(of: pattern, options: .regularExpression) != nil
     }
 }

@@ -28,6 +28,12 @@ struct MenuContent: View {
 }
 final class CopilotPanel: NSPanel {
     override var canBecomeKey: Bool { true }
+    // A click on a panel that is not key would only make it key: a pop-up such as the window list
+    // would not open until the second click. Become key first, then handle the same click.
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown && !isKeyWindow { makeKey() }
+        super.sendEvent(event)
+    }
     override var canBecomeMain: Bool { false }
 }
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate {

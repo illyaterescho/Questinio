@@ -94,18 +94,32 @@ struct CodeWindow: Identifiable, Hashable { let id: UInt32; let title: String }
         if selectedWindow != best.windowID { selectedWindow = best.windowID }
         autoSelected = true
     }
-    func refreshForAnswer() async {
+    func refreshForAnswer(window: UInt32? = nil) async {
         while busy {
             do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
         }
         guard !Task.isCancelled else { return }
-        await capture()
+        await capture(window: window)
     }
-    func capture() async {
-        guard !busy, selectedWindow != 0 || region != nil else { status = "Спочатку виберіть вікно або область"; automatic = false; return }
+    /// The window the user is looking at: front-most on screen, of any app but this one. The floating panel
+    /// never takes focus, so this is the chart or program behind it, not the IDE chosen for code questions.
+    nonisolated static func frontWindow() -> UInt32? {
+        let own = ProcessInfo.processInfo.processIdentifier
+        let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        for window in windows {
+            guard (window[kCGWindowLayer as String] as? Int) == 0, (window[kCGWindowOwnerPID as String] as? Int32) != own,
+                  let bounds = window[kCGWindowBounds as String] as? [String: CGFloat], (bounds["Width"] ?? 0) > 300, (bounds["Height"] ?? 0) > 200,
+                  let id = window[kCGWindowNumber as String] as? UInt32 else { continue }
+            return id
+        }
+        return nil
+    }
+    /// `window` captures that window once without changing the window chosen for code.
+    func capture(window: UInt32? = nil) async {
+        guard !busy, window != nil || selectedWindow != 0 || region != nil else { status = "Спочатку виберіть вікно або область"; automatic = false; return }
         busy = true; defer { busy = false }
         let requestEpoch = epoch
-        let windowID = selectedWindow; let selectedRegion = region; let selectedDisplay = displayID
+        let windowID = window ?? selectedWindow; let selectedRegion = window == nil ? region : nil; let selectedDisplay = displayID
         status = "Зчитування екрана…"
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
