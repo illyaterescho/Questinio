@@ -3,9 +3,22 @@ import LocalCopilotCore
 @MainActor final class DiagnosticsManager: ObservableObject {
     @Published var lines: [String] = []
     @Published var testing = false
-    func log(_ text: String) {
+    /// `onDisk: false` for lines that quote what was said.
+    func log(_ text: String, onDisk: Bool = true) {
         let timestamp = Date().formatted(date: .omitted, time: .standard)
         lines.append("\(timestamp)  \(text)"); if lines.count > 160 { lines.removeFirst(lines.count - 160) }
+        if onDisk { Self.append("\(Date().ISO8601Format())  \(text)\n") }
+    }
+    /// Also kept on disk (no questions or answers, only events and timings) so a slow answer can be looked at later.
+    static let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Questionio/diagnostics.log")
+    private static func append(_ line: String) {
+        let manager = FileManager.default
+        try? manager.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let size = (try? manager.attributesOfItem(atPath: file.path))?[.size] as? Int, size > 1_000_000 { try? manager.removeItem(at: file) }
+        if !manager.fileExists(atPath: file.path) { manager.createFile(atPath: file.path, contents: nil) }
+        guard let handle = try? FileHandle(forWritingTo: file) else { return }
+        defer { try? handle.close() }
+        _ = try? handle.seekToEnd(); try? handle.write(contentsOf: Data(line.utf8))
     }
     func testOllama(_ service: OllamaService, settings: CopilotSettings) async {
         guard !testing else { return }; testing = true; defer { testing = false }

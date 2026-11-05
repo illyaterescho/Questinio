@@ -13,6 +13,7 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
         didSet {
             let modelChanged = settings.model != oldValue.model || settings.fastModel != oldValue.fastModel || settings.fastAnswers != oldValue.fastAnswers || settings.contextTokens != oldValue.contextTokens
             if settings.privateWindow != oldValue.privateWindow { ghostCheck = .untested }
+            if !settings.claudeSendScreenshots && oldValue.claudeSendScreenshots { screen.automatic = false }
             persistSettings()
             if modelChanged || settings.answerBackend != oldValue.answerBackend || settings.backgroundBackend != oldValue.backgroundBackend { Task { await refreshModels() } }
             if settings.speechEngine != oldValue.speechEngine { Task { await loadModel() } }
@@ -54,6 +55,7 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
     @Published var answerTruncated = false
     @Published var generationSeconds: Double?
     @Published var sessionTopic = ""
+    private var preparedSeconds = 0.0
     /// Switched by “давай англійською” / “давай українською” in the conversation; a new session starts in Ukrainian.
     @Published var answerLanguage = AnswerLanguage.ukrainian
     @Published var sessionTranscript = ""
@@ -122,11 +124,11 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
     func saveClaudeKey(_ value: String) {
         let key = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return }
-        do { try claude.keychain.save(key); claudeKeyStored = true; Task { await refreshModels() } }
+        do { try claude.keychain.save(key); claudeKeyStored = true; Task { await claude.forgetKey(); await refreshModels() } }
         catch { self.error = error.localizedDescription }
     }
     func deleteClaudeKey() {
-        do { try claude.keychain.delete(); claudeKeyStored = false; Task { await refreshModels() } }
+        do { try claude.keychain.delete(); claudeKeyStored = false; Task { await claude.forgetKey(); await refreshModels() } }
         catch { self.error = error.localizedDescription }
     }
     // “Auto” means listening and answering on its own. Turning it off keeps listening
@@ -583,7 +585,7 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
     private func resolveSpeechQuestion(_ text: String) -> String {
         let resolved = TechnicalQuestionNormalizer.normalize(text)
         recognizedQuestionNote = resolved == text ? "" : "IT-терміни уточнено · сирий текст у Transcript"
-        if resolved != text { diagnostics.log("Speech question terms normalized: \(resolved)") }
+        if resolved != text { diagnostics.log("Speech question terms normalized: \(resolved)", onDisk: false) }
         return resolved
     }
     func generateManual() {
@@ -625,6 +627,9 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
         generationTask = Task { [weak self, ollama, service = answerService, useClaude = answersUseClaude] in
             do {
                 guard let self else { return }
+                // Where the time before the first token goes: logged per stage, so a slow answer can be traced.
+                var stages: [String] = []; var stageStart = Date()
+                func mark(_ name: String) { let now = Date(); let seconds = now.timeIntervalSince(stageStart); if seconds >= 0.05 { stages.append(name + String(format: " %.2f", seconds)) }; stageStart = now }
                 var requestContext = responseContext
                 if self.settings.saveHistory, self.transcriptCount > 60 {
                     await self.journalTask?.value
@@ -633,8 +638,11 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
                     }
                     guard self.generationID == id, !Task.isCancelled else { return }
                 }
+                let folder = snapshot.useProjectFolder ? self.project.rootPath : ""
                 let needsCurrentEditor = ProjectCodeIndex.refersToCurrentCode(input) || ProjectCodeIndex.requestedLine(input) != nil
-                let editorSnapshot = !useCode || !needsCurrentEditor || self.project.rootPath.isEmpty || !self.screen.enabled ? nil : self.editor.snapshot(root: self.project.rootPath)
+                mark("journal")
+                let editorSnapshot = !useCode || !needsCurrentEditor || folder.isEmpty || !self.screen.enabled ? nil : self.editor.snapshot(root: folder)
+                mark("IDE")
                 guard self.generationID == id, !Task.isCancelled else { return }
                 // Older turns are compressed while idle, never before a foreground answer.
                 guard self.generationID == id, !Task.isCancelled else { return }
@@ -643,26 +651,29 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
                     self.sessionContext.append(speaker: "Показаний код: " + self.screen.sourceName, text: String(self.screen.codeText.prefix(10000)))
                 }
                 // A chart cannot be answered from source text: always look at the screen for it.
-                let visual = ScreenshotPolicy.capturesForVisualQuestion(visual: VisualQuestionRouter.isVisual(input), cloud: useClaude, automatic: automatic)
+                let asksVisual = VisualQuestionRouter.isVisual(input)
+                let visual = ScreenshotPolicy.capturesForVisualQuestion(visual: asksVisual, allowed: snapshot.claudeSendScreenshots, cloud: useClaude, automatic: automatic)
                 let seeScreen = ScreenshotPolicy.capturesForCodeQuestion(codeQuestion: useCode, allowed: snapshot.claudeSendScreenshots, cloud: useClaude, automatic: automatic)
                 if (visual || seeScreen) && self.screen.enabled {
                     await self.screen.ensureIDEWindow()
                     if self.screen.hasSource { await self.screen.refreshForAnswer() }
                     guard self.generationID == id, !Task.isCancelled else { return }
                 }
+                mark("screen")
                 // The folder is rescanned on a timer only while recording.
-                if useCode && !self.running { await self.project.refresh() }
+                if useCode && !folder.isEmpty && !self.running { await self.project.refresh() }
+                mark("folder")
                 let retrievalStart = Date()
-                var retrieved = !useCode || self.project.rootPath.isEmpty ? nil : self.project.context(question: input, source: self.screen.enabled ? self.screen.sourceName : "", visible: self.screen.enabled ? self.screen.codeText : "", editor: editorSnapshot)
-                if useCode && retrieved?.context.isEmpty != false && self.screen.enabled && self.screen.automatic {
+                var retrieved = !useCode || folder.isEmpty ? nil : self.project.context(question: input, source: self.screen.enabled ? self.screen.sourceName : "", visible: self.screen.enabled ? self.screen.codeText : "", editor: editorSnapshot)
+                if useCode && retrieved?.context.isEmpty != false && snapshot.claudeSendScreenshots && self.screen.enabled && self.screen.automatic {
                     await self.screen.refreshForAnswer()
                     guard self.generationID == id, !Task.isCancelled else { return }
-                    if !self.project.rootPath.isEmpty {
+                    if !folder.isEmpty {
                         retrieved = self.project.context(question: input, source: self.screen.sourceName, visible: self.screen.codeText, editor: editorSnapshot)
                     }
                 }
                 var code = retrieved?.context.isEmpty == false ? retrieved!.context : ((useCode || visual) && self.screen.enabled ? self.screen.codeText : "")
-                if continuingCodeQuestion && code.isEmpty { code = self.lastProjectCode }
+                if continuingCodeQuestion && code.isEmpty && !folder.isEmpty { code = self.lastProjectCode }
                 if useCode, let retrieved, !retrieved.files.isEmpty, !retrieved.context.isEmpty { self.lastProjectCode = retrieved.context }
                 var groundedQuestion = input
                 if continuingCodeQuestion && !code.isEmpty {
@@ -678,7 +689,7 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
                 var images: [String] = []
                 // Exact source text needs no visual embedding, except for visual questions.
                 // Otherwise vision remains a fallback when no project is connected.
-                if ((useCode && retrieved == nil) || visual || seeScreen) && self.screen.enabled && self.screen.useImage, let data = self.screen.imageData {
+                if snapshot.claudeSendScreenshots && ((useCode && retrieved == nil) || visual || seeScreen) && self.screen.enabled && self.screen.useImage, let data = self.screen.imageData {
                     if useClaude {
                         if ScreenshotPolicy.sendsImage(allowed: snapshot.claudeSendScreenshots, cloud: true, automatic: automatic) && data.count < 3_700_000 { images = [data.base64EncodedString()] }
                         else { self.diagnostics.log("Screenshot not sent to Claude: disabled, automatic answer, or larger than the API limit") }
@@ -686,7 +697,7 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
                     else { self.diagnostics.log("Selected model has no Vision; using OCR text only") }
                 }
                 if seeScreen && !images.isEmpty { groundedQuestion += "\nДодано знімок відкритого вікна IDE. Для точних рядків і назв спирайся на наведений текст файла, якщо він є." }
-                if visual && images.isEmpty { groundedQuestion += "\nЗображення екрана недоступне: не описуй графік чи діаграму за здогадом." }
+                if asksVisual && images.isEmpty { groundedQuestion += "\nЗображення екрана недоступне: не описуй графік чи діаграму за здогадом; скажи, що про нього написано в матеріалах, якщо там є." }
                 let rules = [
                     CopilotSettings.directAnswerRule,
                     SpeechVocabulary.hint(snapshot.vocabularyProfile),
@@ -707,6 +718,9 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
                 self.diagnostics.log("Code route: \(useCode ? "code" : "general")\(visual ? " + visual" : ""); backend: \(useClaude ? snapshot.claudeModel : snapshot.model); files: \(retrieved?.files.joined(separator: ", ") ?? "none"); retrieval \(String(format: "%.3f", Date().timeIntervalSince(retrievalStart))) s; model: \(snapshot.model)")
                 guard self.generationID == id, !Task.isCancelled else { return }
                 self.diagnostics.log("Answer context: \(self.screen.enabled ? self.screen.sourceName : "disabled"); images: \(images.count); memory: \(self.memorySummary.count) chars")
+                mark("search")
+                self.preparedSeconds = Date().timeIntervalSince(self.generationStarted)
+                self.diagnostics.log(String(format: "Answer prep %.2f s", self.preparedSeconds) + (stages.isEmpty ? "" : " · " + stages.joined(separator: " · ")))
                 defer { Task { [weak self] in await self?.refreshClaudeSpend() } }
                 try await service.chat(messages: requestMessages, settings: snapshot, images: images, formatJSON: false) { [weak self] packet in
                     await self?.receivePacket(packet, id: id)
@@ -775,7 +789,10 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
     private func receivePacket(_ packet: OllamaPacket, id: UUID) {
         guard generationID == id else { return }
         if let token = packet.message?.content, !token.isEmpty {
-            if firstTokenSeconds == nil { firstTokenSeconds = Date().timeIntervalSince(generationStarted) }
+            if firstTokenSeconds == nil {
+                let seconds = Date().timeIntervalSince(generationStarted); firstTokenSeconds = seconds
+                diagnostics.log(String(format: "First token %.2f s: preparation %.2f s, model %.2f s", seconds, preparedSeconds, seconds - preparedSeconds))
+            }
             contentParser.append(token); answer = contentParser.answer
             if !contentParser.thinking.isEmpty { thinkingText = String(contentParser.thinking.suffix(12000)) }
         }
@@ -888,7 +905,7 @@ enum GhostCheck: Equatable { case untested, hidden, visible }
         do {
             if !(await speech.ready) { try await speech.load(folder: settings.modelPath); whisperStatus = "Ready" }
             let result = try await speech.transcribeFile(path: url.path, language: settings.language)
-            diagnostics.log("Whisper file test: \(String(format: "%.2f", result.seconds)) s; \(result.text)")
+            diagnostics.log("Whisper file test: \(String(format: "%.2f", result.seconds)) s; \(result.text)", onDisk: false)
         } catch { diagnostics.log("Whisper test failed: \(error.localizedDescription)") }
     }
 }

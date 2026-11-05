@@ -142,7 +142,7 @@ final class DocumentIndexTests: XCTestCase {
         """
         let text = DocxText.text(fromDocumentXML: Data(xml.utf8))
         XCTAssertTrue(text.contains("Дисперсія:D=(1)/(n)∑x^(2)"), text)
-        XCTAssertTrue(text.contains("x") && text.contains("5"))
+        XCTAssertTrue(text.contains("x | 5"), text); XCTAssertFalse(text.contains("5 |"), text)
     }
     func testOnlyMatchingPassagesGoOut() {
         let filler = (1...40).map { "Абзац \($0) про інтерфейс програми, кнопки і налаштування вікна." }.joined(separator: "\n")
@@ -151,6 +151,13 @@ final class DocumentIndexTests: XCTestCase {
         XCTAssertTrue(context.contains("Дисперсія вибірки")); XCTAssertTrue(context.hasPrefix("[lab5.docx]"))
         XCTAssertLessThanOrEqual(context.count, 1200)
         XCTAssertEqual(index.context(for: "що таке", limit: 1200), "")
+    }
+    func testNotationWithDigitsIsSearchable() {
+        let filler = (1...40).map { "Абзац \($0) про інтерфейс програми, кнопки і налаштування вікна." }.joined(separator: "\n")
+        let index = DocumentIndex(documents: [("lab.docx", filler + "\nRₖ² — частка дисперсії, пояснена іншими ознаками.\n" + filler)])
+        XCTAssertTrue(index.context(for: "Що таке R2?", limit: 1200).contains("частка дисперсії"))
+        XCTAssertTrue(DocumentIndex.terms("Що таке R2 і X1?").isSuperset(of: ["r2", "x1"]))
+        XCTAssertFalse(DocumentIndex.terms("що таке ми ok").contains("ok"))
     }
     func testSmallMaterialsGoWhole() {
         let index = DocumentIndex(documents: [("note.txt", "Короткий конспект: мода — найчастіше значення.")])

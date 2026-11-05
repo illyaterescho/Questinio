@@ -39,11 +39,16 @@ public struct DocumentIndex: Sendable {
         return result
     }
     private static let stopWords: Set<String> = ["що", "як", "це", "цей", "ця", "ці", "той", "для", "або", "але", "при", "про", "від", "над", "під", "між", "яка", "який", "які", "якщо", "чому", "коли", "тут", "там", "так", "теж", "ще", "вже", "був", "була", "було", "бути", "його", "її", "їх", "ми", "ви", "він", "вона", "воно", "вони", "мені", "тобі", "нам", "вам", "чи", "та", "і", "й", "а", "в", "у", "з", "із", "на", "до", "по", "не", "ні", "the", "and", "for", "with", "what", "how", "why", "this", "that", "from", "are", "was", "is", "you", "your"]
-    /// Lower-cased words of three or more characters, cut to a six-letter stem so «дисперсія» and «дисперсії» match.
+    private static let scripts: [Character: Character] = Dictionary(uniqueKeysWithValues: zip("⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉", "01234567890123456789"))
+    /// Lower-cased words cut to a six-letter stem so «дисперсія» and «дисперсії» match. Short words count only
+    /// as notation with a digit (R², X1, H₀ written as r2, x1, h0), which formulas in materials are full of.
     static func terms(_ text: String) -> Set<String> {
         var result = Set<String>()
-        for word in text.lowercased().split(whereSeparator: { !($0.isLetter || $0.isNumber) }) where word.count >= 3 {
+        // Letter subscripts are indices: Rₖ² is searched as R².
+        let text = String(text.lowercased().filter { !"ₐₑₒₓₕₖₗₘₙₚₛₜᵢⱼ".contains($0) }.map { scripts[$0] ?? $0 })
+        for word in text.split(whereSeparator: { !($0.isLetter || $0.isNumber) }) {
             let word = String(word)
+            guard word.count >= 3 || (word.count == 2 && word.contains(where: \.isNumber) && word.contains(where: \.isLetter)) else { continue }
             guard !stopWords.contains(word) else { continue }
             result.insert(String(word.prefix(6)))
         }
@@ -89,15 +94,20 @@ public enum DocxText {
     }
     public static func text(fromDocumentXML data: Data) -> String {
         let reader = Reader(); let parser = XMLParser(data: data); parser.delegate = reader; parser.parse()
-        return reader.output.replacingOccurrences(of: #"[ \t]*\n[ \t]*\n\s*"#, with: "\n", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+        return reader.output
+            .replacingOccurrences(of: #"\s*\|\s*\n"#, with: "\n", options: .regularExpression)
+            .replacingOccurrences(of: #" {2,}"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"[ \t]*\n[ \t]*\n\s*"#, with: "\n", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
     }
     private final class Reader: NSObject, XMLParserDelegate {
         var output = ""
         private var inText = false
         private var naryPending = false
+        private var cellDepth = 0
         func parser(_ parser: XMLParser, didStartElement name: String, namespaceURI: String?, qualifiedName: String?, attributes: [String: String] = [:]) {
             switch name {
             case "w:t", "m:t": inText = true
+            case "w:tc": cellDepth += 1
             case "w:tab": output += "\t"
             case "w:br", "w:cr": output += "\n"
             case "m:num", "m:d", "m:den": output += "("
@@ -113,8 +123,10 @@ public enum DocxText {
         func parser(_ parser: XMLParser, didEndElement name: String, namespaceURI: String?, qualifiedName: String?) {
             switch name {
             case "w:t", "m:t": inText = false
-            case "w:p", "w:tr": output += "\n"
-            case "w:tc": output += " | "
+            // A table row is one line: «X1 | 4,02267 | -12,12289».
+            case "w:p": output += cellDepth > 0 ? " " : "\n"
+            case "w:tr": output += "\n"
+            case "w:tc": cellDepth -= 1; output += " | "
             case "m:num": output += ")/"
             case "m:den", "m:d", "m:sup", "m:sub", "m:rad": output += ")"
             case "m:oMath": output += " "

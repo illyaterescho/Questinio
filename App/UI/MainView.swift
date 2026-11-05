@@ -289,7 +289,7 @@ struct ClaudeSection: View {
             }
             Stepper(String(format: "Денний ліміт: $%.2f", model.settings.claudeDailyLimitUSD), value: $model.settings.claudeDailyLimitUSD, in: 0.25...20, step: 0.25)
             Text(String(format: "Витрачено сьогодні: $%.4f", model.claudeSpentToday)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
-            Toggle("Слати знімок вікна IDE (питання про код і графіки)", isOn: $model.settings.claudeSendScreenshots)
+            Toggle("Знімки екрана для відповідей (код і графіки)", isOn: $model.settings.claudeSendScreenshots)
             Text("З ключем в Anthropic ідуть текст розмови, фрагменти коду, OCR і знімок вікна IDE для питань про код. Аудіо лишається на цьому Mac.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }.task { await model.refreshClaudeSpend() }
     }
@@ -326,7 +326,7 @@ struct ProjectPanel: View {
             Divider()
             VStack(alignment: .leading, spacing: 6) {
                 Label("Вікно на екрані", systemImage: "macwindow").font(.subheadline.weight(.semibold))
-                Toggle("Робити знімок вікна JetBrains для питань про код", isOn: $model.settings.claudeSendScreenshots)
+                Toggle("Знімки екрана для відповідей (код і графіки)", isOn: $model.settings.claudeSendScreenshots)
                 Text(screen.sourceName + " · " + screen.status).font(.caption).foregroundStyle(.secondary)
                 if PermissionsManager.screenStatus != "Allowed" { Button("Дати дозвіл на запис екрана") { PermissionsManager.openPrivacy("Privacy_ScreenCapture") }.glassButton(prominent: true) }
             }
@@ -425,9 +425,10 @@ struct HistoryView: View {
 
 /// Which window and folder answers about code read: the same choices as «Контекст і код».
 struct CodeSourceView: View {
+    @ObservedObject var model: ConversationManager
     @ObservedObject var screen: ScreenContextService
     @ObservedObject var project: ProjectContextService
-    init(model: ConversationManager) { screen = model.screen; project = model.project }
+    init(model: ConversationManager) { self.model = model; screen = model.screen; project = model.project }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Звідки читати код").font(.headline)
@@ -442,6 +443,8 @@ struct CodeSourceView: View {
                     }
                 }
             }
+            Toggle("Використовувати теку у відповідях", isOn: $model.settings.useProjectFolder).disabled(project.rootPath.isEmpty)
+            Toggle("Знімки екрана: вікно бачить модель, відповідь на ~10 с довша", isOn: $model.settings.claudeSendScreenshots)
             Text(screen.sourceName + " · " + screen.status).font(.caption).foregroundStyle(.secondary).lineLimit(2)
         }.task { if PermissionsManager.screenStatus == "Allowed" { await screen.refreshWindows() } }
     }

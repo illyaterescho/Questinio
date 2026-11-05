@@ -343,11 +343,14 @@ final class CoreTests: XCTestCase {
     func testAutomaticAnswersNeverSendTheScreenToTheCloud() {
         XCTAssertFalse(ScreenshotPolicy.sendsImage(allowed: true, cloud: true, automatic: true))
         XCTAssertFalse(ScreenshotPolicy.capturesForCodeQuestion(codeQuestion: true, allowed: true, cloud: true, automatic: true))
-        XCTAssertFalse(ScreenshotPolicy.capturesForVisualQuestion(visual: true, cloud: true, automatic: true))
+        XCTAssertFalse(ScreenshotPolicy.capturesForVisualQuestion(visual: true, allowed: true, cloud: true, automatic: true))
+        XCTAssertFalse(ScreenshotPolicy.capturesForVisualQuestion(visual: true, allowed: false, cloud: true, automatic: false)) // the image could not be sent: no 10-second capture
         XCTAssertFalse(ScreenshotPolicy.sendsImage(allowed: false, cloud: true, automatic: false)) // off by default
         XCTAssertTrue(ScreenshotPolicy.sendsImage(allowed: true, cloud: true, automatic: false))
         XCTAssertTrue(ScreenshotPolicy.sendsImage(allowed: false, cloud: false, automatic: true)) // a local model keeps it on the Mac
-        XCTAssertTrue(ScreenshotPolicy.capturesForVisualQuestion(visual: true, cloud: false, automatic: true))
+        XCTAssertTrue(ScreenshotPolicy.capturesForVisualQuestion(visual: true, allowed: true, cloud: false, automatic: true))
+        XCTAssertFalse(ScreenshotPolicy.capturesForVisualQuestion(visual: true, allowed: false, cloud: false, automatic: false)) // switched off: not for a local model either
+        XCTAssertTrue(ScreenshotPolicy.capturesForVisualQuestion(visual: true, allowed: true, cloud: true, automatic: false))
     }
     func testCaptureComparisonSeesAWindowButNotEqualPictures() throws {
         func picture(panel: CGRect?) throws -> CGImage {

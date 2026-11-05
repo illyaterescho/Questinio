@@ -28,6 +28,8 @@ public struct CopilotSettings: Codable, Equatable, Sendable {
     public var answerFromMicrophone = false
     public var model = "qwen3.5:9b"
     public var projectFolder = ""
+    /// The folder stays connected; off, answers simply do not read it.
+    public var useProjectFolder = true
     public var readWebStorm = false
     public var fastAnswers = false
     public var fastModel = "qwen3.5:4b"

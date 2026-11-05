@@ -48,8 +48,9 @@ public enum ScreenshotPolicy {
     public static func capturesForCodeQuestion(codeQuestion: Bool, allowed: Bool, cloud: Bool, automatic: Bool) -> Bool {
         codeQuestion && allowed && !(cloud && automatic)
     }
-    public static func capturesForVisualQuestion(visual: Bool, cloud: Bool, automatic: Bool) -> Bool {
-        visual && !(cloud && automatic)
+    /// «Знімки екрана» off means no capture at all: capture and OCR take ~10 s, for the cloud or a local model.
+    public static func capturesForVisualQuestion(visual: Bool, allowed: Bool, cloud: Bool, automatic: Bool) -> Bool {
+        visual && allowed && !(cloud && automatic)
     }
     public static func sendsImage(allowed: Bool, cloud: Bool, automatic: Bool) -> Bool {
         !cloud || (allowed && !automatic)

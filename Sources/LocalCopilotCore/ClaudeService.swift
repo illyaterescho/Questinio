@@ -151,6 +151,9 @@ public actor ClaudeService: LLMService {
     public nonisolated let keychain: KeychainStore
     public nonisolated let spend: SpendTracker
     private let session: URLSession
+    /// Read once per launch: the Keychain lookup is slow, and after a rebuild macOS may stop to ask for access.
+    private var cachedKey: String?
+    public func forgetKey() { cachedKey = nil }
     public init(keychain: KeychainStore = KeychainStore(), spend: SpendTracker = SpendTracker()) {
         self.keychain = keychain; self.spend = spend
         let config = URLSessionConfiguration.ephemeral
@@ -158,7 +161,8 @@ public actor ClaudeService: LLMService {
         session = URLSession(configuration: config)
     }
     public func chat(messages: [ChatMessage], settings: CopilotSettings, images: [String], formatJSON: Bool, onPacket: @Sendable (OllamaPacket) async -> Void) async throws {
-        guard let key = try keychain.read(), !key.isEmpty else { throw CopilotError.message("Ключ Claude не задано. Вставте його в панелі «Модель AI».") }
+        if cachedKey == nil { cachedKey = try keychain.read() }
+        guard let key = cachedKey, !key.isEmpty else { throw CopilotError.message("Ключ Claude не задано. Вставте його в панелі «Модель AI».") }
         guard await spend.spentToday() < settings.claudeDailyLimitUSD else {
             throw CopilotError.message(String(format: "Claude: денний ліміт $%.2f вичерпано. Підніміть його в панелі «Модель AI» або перемкніться на Ollama.", settings.claudeDailyLimitUSD))
         }

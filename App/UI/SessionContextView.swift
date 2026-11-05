@@ -24,7 +24,7 @@ struct SessionContextView: View {
                         Button("Виділити область") { screen.selectRegion() }
                         if model.project.rootPath.isEmpty { Button("Відкрити код…") { screen.openCodeFile() } }
                     }.disabled(screen.busy)
-                    HStack { Toggle("Оновлювати кожні 5 с і перед відповіддю", isOn: $screen.automatic); if screen.busy { ProgressView().controlSize(.small) } }
+                    HStack { Toggle("Оновлювати кожні 5 с і перед відповіддю", isOn: $screen.automatic).disabled(!model.settings.claudeSendScreenshots).help("Потрібні ввімкнені «Знімки екрана»"); if screen.busy { ProgressView().controlSize(.small) } }
                     Toggle("Передавати знімок локальній Vision-моделі", isOn: $screen.useImage)
                     Text(screen.sourceName + " · " + screen.status).font(.caption).textSelection(.enabled)
                     if let updated = screen.updated { Text("Знімок: " + updated.formatted(date: .omitted, time: .standard)).font(.caption).foregroundStyle(.secondary) }
